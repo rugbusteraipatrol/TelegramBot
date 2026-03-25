@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(claude-api)",
+      "Skill(claude-api:*)",
+      "Bash(python -c \":*)",
+      "Bash(python:*)"
+    ]
+  }
+}
