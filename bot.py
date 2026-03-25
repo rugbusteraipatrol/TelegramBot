@@ -34,23 +34,19 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """Ti si PriceBot Srbija — asistent za pronalaženje najjeftinijih cijena u Srbiji.
 
-Prioritet sajtova: cenoteka.rs, ananas.rs, gigatron.rs
-Ako ne nađeš na prioritetnim sajtovima, pretraži i druge srpske prodavnice (shoppster.com, tehnomanija.rs, itd.).
+Prioritet sajtova: Cenoteka.rs, ananas.rs, gigatron.rs
+Ako ne nađeš na prioritetnim sajtovima, pretraži i druge srpske prodavnice.
 
 Format za svaki rezultat:
-🛒 Naziv proizvoda • Sajt: Cena RSD 🔗 Link
+🛒 Naziv proizvoda • Cijena: Cena RSD 🔗 https://www.cenoteka.rs/pretraga?q=PROIZVOD
 
-VAŽNE INSTRUKCIJE ZA LINKOVE:
-1. Linkovi MORAJU biti DIREKTNI linkovi do proizvoda/stranice sa proizvodom
-2. NIKADA ne vraćaj samo početnu stranicu (npr. https://ananas.rs/)
-3. Linkovi trebaju biti sa search query-jem ili direktnom pozicijom proizvoda
-4. Npr: https://ananas.rs/search?q=iPhone+15 ili https://ananas.rs/proizvodi/iphone-15-pro-128gb
-5. Ako je link samo početna stranica, dodaj /search?q=proizvod na kraju
-6. Provjeri da link sadrži naziv proizvoda ili search parametar
+VAŽNO:
+- Uvijek koristi Cenoteka linkove: https://www.cenoteka.rs/pretraga?q=NAZIV+PROIZVODA
+- Zamijeni NAZIV sa nazivom proizvoda, razmake sa +
+- Primjer: https://www.cenoteka.rs/pretraga?q=iPhone+15+Pro
 
 Prikaži top 3-5 najjeftinijih opcija sortirano od najjeftinije ka najskupljoj.
-Uvijek odgovaraj na srpskom jeziku.
-Ako ne možeš naći proizvod, obavijesti korisnika i predloži alternativu."""
+Uvijek odgovaraj na srpskom jeziku."""
 
 # ─── Labele dugmadi (konstante, koriste se za match u message_handleru) ────────
 
@@ -121,6 +117,34 @@ def parse_ad_query(text: str) -> tuple[str, float | None]:
     return text, None
 
 
+def convert_to_cenoteka_links(response: str) -> str:
+    """Zamijeni sve linkove sa Cenoteka search linkom."""
+    # Pronađi sve redove sa 🛒 i linkom
+    lines = response.split("\n")
+    result = []
+
+    for line in lines:
+        # Pronađi proizvod između 🛒 i • Cijena
+        match = re.search(r"🛒\s*([^•]+)\s*•", line)
+        if match:
+            product_name = match.group(1).strip()
+            # Zamijeni razmake sa + i kreiraj Cenoteka link
+            search_query = product_name.replace(" ", "+")
+            cenoteka_link = f"https://www.cenoteka.rs/pretraga?q={search_query}"
+
+            # Zamijeni cijeli link u liniji
+            new_line = re.sub(
+                r"🔗\s*https?://[^\s]+",
+                f"🔗 {cenoteka_link}",
+                line
+            )
+            result.append(new_line)
+        else:
+            result.append(line)
+
+    return "\n".join(result)
+
+
 async def ask_claude(user_message: str) -> str:
     """Šalje upit Gemini 2.0 Flash-u sa Google Search toolom i vraća odgovor."""
     try:
@@ -149,7 +173,11 @@ async def ask_claude(user_message: str) -> str:
             content = data["candidates"][0].get("content", {})
             parts = content.get("parts", [])
             texts = [p.get("text", "") for p in parts if "text" in p]
-            return "\n".join(texts) or "Nisam pronašao rezultate."
+            response_text = "\n".join(texts) or "Nisam pronašao rezultate."
+
+            # Zamijeni sve linkove sa Cenoteka linkovima
+            response_text = convert_to_cenoteka_links(response_text)
+            return response_text
 
         return "Nisam pronašao rezultate."
 
