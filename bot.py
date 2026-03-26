@@ -439,18 +439,23 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await do_search(update, user.id, text, is_premium)
 
 
-# ─── Background job — provjera oglasa svakih 12h ──────────────────────────────
+# ─── Background job — provjera oglasa svakih 1h ───────────────────────────────
 
 async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Pokrenuta provjera aktivnih oglasa...")
+    logger.info("🔍 Pokrenuta provjera aktivnih oglasa...")
     ads = db.get_all_active_ads()
+    total_checked = 0
+    total_new_found = 0
 
     for ad in ads:
+        total_checked += 1
         try:
+            # Provjeri je li oglasu isteklo vrijeme praćenja
             if ad["expires_at"]:
                 expires = datetime.fromisoformat(ad["expires_at"])
                 if datetime.now() > expires:
                     db.deactivate_ad(ad["id"])
+                    logger.info(f"⏰ Oglas #{ad['id']} ({ad['search_term']}) je istekao.")
                     await context.bot.send_message(
                         chat_id=ad["user_id"],
                         text=(
@@ -464,12 +469,37 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
                     )
                     continue
 
+            # Pretraga oglasa na sajtu
             results = scraper.scrape_site(ad["site"], ad["search_term"], ad["max_price"])
             known_urls = json.loads(ad.get("known_urls") or "[]")
             new_results = [r for r in results if r["url"] not in known_urls]
 
+            # Logiranje rezultata pretrage
+            max_price_info = f" (max {ad['max_price']:.0f}€)" if ad["max_price"] else ""
+            logger.info(
+                f"📊 Oglas #{ad['id']}: '{ad['search_term']}{max_price_info}' na {ad['site']} — "
+                f"Pronađeno {len(results)} oglasa, {len(new_results)} novih"
+            )
+
+            # Logiranje pojedinih oglasa
+            for i, result in enumerate(results, 1):
+                price = result.get("price")
+                price_str = result.get("price_text", "Cijena nije navedena")
+                is_new = result["url"] not in known_urls
+                is_under_limit = ad["max_price"] is None or price is None or price <= ad["max_price"]
+
+                status = "✅ NOVO" if is_new else "📌 Staro"
+                price_status = "✓ U limitu" if is_under_limit else "✗ Iznad limita"
+
+                logger.info(
+                    f"  {i}. {status} | {result['title'][:50]}... | "
+                    f"{price_str} | {price_status}"
+                )
+
+            # Slanje notifikacija za nove oglase
             for result in new_results:
                 price_str = result.get("price_text") or "Cijena nije navedena"
+                total_new_found += 1
                 await context.bot.send_message(
                     chat_id=ad["user_id"],
                     text=(
@@ -486,9 +516,12 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
             db.update_ad_known_urls(ad["id"], known_urls)
 
         except Exception as e:
-            logger.error(f"Greška pri provjeri oglasa #{ad['id']}: {e}")
+            logger.error(f"❌ Greška pri provjeri oglasa #{ad['id']}: {e}")
 
-    logger.info(f"Provjera završena — provjereno {len(ads)} oglasa.")
+    logger.info(
+        f"✅ Provjera završena — Provjereno {total_checked} oglasa, "
+        f"pronađeno {total_new_found} novih oglasa."
+    )
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -503,7 +536,7 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
-    app.job_queue.run_repeating(check_ads_job, interval=43200, first=60)
+    app.job_queue.run_repeating(check_ads_job, interval=3600, first=60)
 
     logger.info("🚀 PriceBot Srbija pokrenut!")
     app.run_polling()
