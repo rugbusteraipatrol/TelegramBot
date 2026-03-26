@@ -9,7 +9,10 @@
       "Bash(git commit -m \"Add KupujemProdajem.com as price search source alongside Cenoteka.rs:*)",
       "Bash(git push:*)",
       "Bash(git commit -m \"Fix link parsing and improve system prompt clarity:*)",
-      "Bash(git commit -m \"Add detailed logging for check_ads_job debugging:*)"
+      "Bash(git commit -m \"Add detailed logging for check_ads_job debugging:*)",
+      "Bash(git commit:*)",
+      "Bash(.gitignore:*)",
+      "Bash(git checkout:*)"
     ]
   }
 }
