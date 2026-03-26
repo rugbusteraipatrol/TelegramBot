@@ -108,20 +108,23 @@ def scrape_polovniautomobili(search_term: str, max_price: float | None = None) -
 
 def scrape_kupujemprodajem(search_term: str, max_price: float | None = None) -> list[dict]:
     results = []
-    soup = _get(
-        "https://www.kupujemprodajem.com/pretraga",
-        params={
-            "keywords": search_term,
-            "currency": "eur",
-            **({"priceTo": int(max_price)} if max_price else {}),
-        },
-    )
+    url = "https://www.kupujemprodajem.com/pretraga"
+    params = {
+        "keywords": search_term,
+        "currency": "eur",
+        **({"priceTo": int(max_price)} if max_price else {}),
+    }
+    logger.info(f"🔗 KP Scraping: {url} | keywords='{search_term}' | max_price={max_price}")
+
+    soup = _get(url, params=params)
     if not soup:
+        logger.error(f"❌ KP: Nisu mogli dobiti soup za '{search_term}'")
         return results
 
-    for item in soup.select(
-        "div.offer-item, article.offer-item, div.kp-ad-list-item, li.offer-list-item"
-    )[:12]:
+    items = soup.select("div.offer-item, article.offer-item, div.kp-ad-list-item, li.offer-list-item")
+    logger.info(f"📍 KP: Pronađenih {len(items)} itemova sa selektora")
+
+    for item in items[:12]:
         try:
             title_el = item.select_one(
                 "h3 a, .offer-title a, .kp-ad-name a, a.offer-title"
@@ -131,6 +134,7 @@ def scrape_kupujemprodajem(search_term: str, max_price: float | None = None) -> 
             )
 
             if not title_el:
+                logger.debug("⚠️ KP: Title element nije pronađen, skipam item")
                 continue
 
             title = title_el.get_text(strip=True)
@@ -142,12 +146,17 @@ def scrape_kupujemprodajem(search_term: str, max_price: float | None = None) -> 
             price = _parse_price(price_text)
 
             if not _matches_price(price, max_price):
+                logger.debug(f"⚠️ KP: Cijena {price_text} iznad limita {max_price}, skipam")
                 continue
 
-            results.append({"title": title, "price": price, "price_text": price_text, "url": href})
-        except Exception:
+            result = {"title": title, "price": price, "price_text": price_text, "url": href}
+            results.append(result)
+            logger.debug(f"  ✓ KP: {title[:40]}... | {price_text} | {href[:50]}...")
+        except Exception as e:
+            logger.debug(f"⚠️ KP: Greška pri parsiranju: {e}")
             continue
 
+    logger.info(f"✅ KP: Završio scraping sa {len(results)} rezultata")
     return results
 
 

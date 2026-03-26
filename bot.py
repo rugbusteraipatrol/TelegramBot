@@ -454,41 +454,77 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
     logger.info("🔍 Pokrenuta provjera aktivnih oglasa...")
+    logger.info("=" * 80)
+
+    # Debug: Provjeri sve oglase u bazi (ne samo aktivne)
+    try:
+        conn = db.get_conn()
+        cursor = conn.cursor()
+        all_ads_raw = cursor.execute("SELECT * FROM tracked_ads").fetchall()
+        logger.info(f"📊 UKUPNO OGLASA U BAZI: {len(all_ads_raw)}")
+        for row in all_ads_raw:
+            logger.info(f"  - ID:{row[0]} | User:{row[1]} | Termin:'{row[3]}' | Site:{row[5]} | Active:{row[8]} | Expires:{row[9]}")
+        conn.close()
+    except Exception as e:
+        logger.error(f"❌ Greška pri čitanju baze: {e}")
+
+    # Dobij samo aktivne oglase
     ads = db.get_all_active_ads()
+    logger.info(f"📊 AKTIVNIH OGLASA: {len(ads)}")
+    if not ads:
+        logger.warning("⚠️ NEMA AKTIVNIH OGLASA ZA PROVJERU!")
+        logger.info("=" * 80)
+        return
+
     total_checked = 0
     total_new_found = 0
 
     for ad in ads:
         total_checked += 1
+        logger.info(f"\n📌 PROVJERA OGLASA #{ad['id']}")
+        logger.info(f"  Korisnik: {ad['user_id']}")
+        logger.info(f"  Termin: {ad['search_term']}")
+        logger.info(f"  Sajt: {ad['site']}")
+        logger.info(f"  Max cijena: {ad.get('max_price')}")
+        logger.info(f"  Istekao: {ad['expires_at']}")
+
         try:
             # Provjeri je li oglasu isteklo vrijeme praćenja
             if ad["expires_at"]:
                 expires = datetime.fromisoformat(ad["expires_at"])
                 if datetime.now() > expires:
                     db.deactivate_ad(ad["id"])
-                    logger.info(f"⏰ Oglas #{ad['id']} ({ad['search_term']}) je istekao.")
-                    await context.bot.send_message(
-                        chat_id=ad["user_id"],
-                        text=(
-                            f"⏰ Praćenje za *{ad['search_term']}* je isteklo!\n\n"
-                            "Besplatni plan dozvoljava praćenje max 5 dana.\n\n"
-                            f"💎 Nastavi bez limita uz *Premium*!\n\n"
-                            f"👉 [Aktiviraj Premium]({STRIPE_LINK})"
-                        ),
-                        parse_mode="Markdown",
-                        reply_markup=MAIN_KEYBOARD,
-                    )
+                    logger.warning(f"⏰ OGLAS ISTEKAO! Deaktiviram i šaljem notifikaciju...")
+                    try:
+                        await context.bot.send_message(
+                            chat_id=ad["user_id"],
+                            text=(
+                                f"⏰ Praćenje za *{ad['search_term']}* je isteklo!\n\n"
+                                "Besplatni plan dozvoljava praćenje max 5 dana.\n\n"
+                                f"💎 Nastavi bez limita uz *Premium*!\n\n"
+                                f"👉 [Aktiviraj Premium]({STRIPE_LINK})"
+                            ),
+                            parse_mode="Markdown",
+                            reply_markup=MAIN_KEYBOARD,
+                        )
+                        logger.info("✅ Notifikacija o isteku poslana!")
+                    except Exception as send_err:
+                        logger.error(f"❌ Greška pri slanju notifikacije o isteku: {send_err}")
                     continue
 
             # Pretraga oglasa na sajtu
+            logger.info(f"🔍 Skrapiram '{ad['search_term']}' sa {ad['site']}...")
             results = scraper.scrape_site(ad["site"], ad["search_term"], ad["max_price"])
+            logger.info(f"  ✓ Pronađeno {len(results)} oglasa sa scrapinga")
+
             known_urls = json.loads(ad.get("known_urls") or "[]")
             new_results = [r for r in results if r["url"] not in known_urls]
+            logger.info(f"  ✓ Od toga {len(new_results)} su NOVI (nepoznati)")
 
             # Logiranje rezultata pretrage
             max_price_info = f" (max {ad['max_price']:.0f}€)" if ad["max_price"] else ""
             logger.info(
-                f"📊 Oglas #{ad['id']}: '{ad['search_term']}{max_price_info}' na {ad['site']} — "
+                f"📊 REZULTAT: '{ad['search_term']}{max_price_info}' na {ad['site']} — "
                 f"Pronađeno {len(results)} oglasa, {len(new_results)} novih"
             )
 
@@ -508,29 +544,38 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
                 )
 
             # Slanje notifikacija za nove oglase
+            logger.info(f"📨 Slanje {len(new_results)} notifikacija...")
             for result in new_results:
                 price_str = result.get("price_text") or "Cijena nije navedena"
                 total_new_found += 1
-                await context.bot.send_message(
-                    chat_id=ad["user_id"],
-                    text=(
+                try:
+                    msg = (
                         f"🔔 *Novi oglas — {ad['search_term']}*\n\n"
                         f"📦 {result['title']}\n"
                         f"💰 {price_str}\n"
                         f"📍 {ad['site']}\n"
                         f"🔗 [Pogledaj oglas]({result['url']})"
-                    ),
-                    parse_mode="Markdown",
-                )
+                    )
+                    await context.bot.send_message(
+                        chat_id=ad["user_id"],
+                        text=msg,
+                        parse_mode="Markdown",
+                    )
+                    logger.info(f"  ✅ Notifikacija poslana za: {result['title'][:40]}...")
+                except Exception as send_err:
+                    logger.error(f"  ❌ Greška pri slanju notifikacije: {send_err}")
+
                 known_urls.append(result["url"])
 
             db.update_ad_known_urls(ad["id"], known_urls)
+            logger.info(f"✅ Ažurirao known_urls ({len(known_urls)} url-ova)")
 
         except Exception as e:
-            logger.error(f"❌ Greška pri provjeri oglasa #{ad['id']}: {e}")
+            logger.error(f"❌ Greška pri provjeri oglasa #{ad['id']}: {e}", exc_info=True)
 
+    logger.info("=" * 80)
     logger.info(
-        f"✅ Provjera završena — Provjereno {total_checked} oglasa, "
+        f"✅ PROVJERA ZAVRŠENA — Provjereno {total_checked} oglasa, "
         f"pronađeno {total_new_found} novih oglasa."
     )
 
