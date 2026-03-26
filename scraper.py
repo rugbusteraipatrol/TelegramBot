@@ -124,6 +124,26 @@ def scrape_kupujemprodajem(search_term: str, max_price: float | None = None) -> 
     items = soup.select("div.offer-item, article.offer-item, div.kp-ad-list-item, li.offer-list-item")
     logger.info(f"📍 KP: Pronađenih {len(items)} itemova sa selektora")
 
+    # Debug: Ispiši sve dostupne klase i tagove ako nema rezultata
+    if not items:
+        logger.warning("⚠️ KP: NEMA ITEMOVA! Analiziram HTML strukturu...")
+        # Pronađi sve div-ove sa class atributima
+        all_divs = soup.find_all("div", class_=True)
+        all_articles = soup.find_all("article", class_=True)
+        logger.info(f"  Ukupno div-ova sa klasama: {len(all_divs)}")
+        logger.info(f"  Ukupno article-a sa klasama: {len(all_articles)}")
+        # Ispiši prvih 10 klasa
+        if all_divs:
+            logger.info(f"  Primjer klasa iz div-ova:")
+            for i, div in enumerate(all_divs[:10]):
+                classes = div.get("class", [])
+                logger.info(f"    {i+1}. {' '.join(classes)}")
+        if all_articles:
+            logger.info(f"  Primjer klasa iz article-a:")
+            for i, art in enumerate(all_articles[:5]):
+                classes = art.get("class", [])
+                logger.info(f"    {i+1}. {' '.join(classes)}")
+
     for item in items[:12]:
         try:
             title_el = item.select_one(
