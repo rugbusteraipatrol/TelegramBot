@@ -592,7 +592,7 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
-    app.job_queue.run_repeating(check_ads_job, interval=3600, first=60)
+    app.job_queue.run_repeating(check_ads_job, interval=600, first=60)  # 10 minuta za testing
 
     logger.info("🚀 PriceBot Srbija pokrenut!")
     app.run_polling()
