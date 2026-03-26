@@ -137,3 +137,43 @@ def update_ad_known_urls(ad_id: int, known_urls: list):
             (json.dumps(known_urls), ad_id),
         )
         conn.commit()
+
+
+# ─── Stats operacije ──────────────────────────────────────────────────────────
+
+def get_stats() -> dict:
+    """Vraća sve statistike za /stats komandu."""
+    today = date.today().isoformat()
+    with get_conn() as conn:
+        # Broj korisnika ukupno
+        total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+        # Broj free vs premium
+        free_users = conn.execute("SELECT COUNT(*) FROM users WHERE plan='free'").fetchone()[0]
+        premium_users = conn.execute("SELECT COUNT(*) FROM users WHERE plan='premium'").fetchone()[0]
+
+        # Broj pretraga danas
+        searches_today = conn.execute(
+            "SELECT COUNT(*) FROM users WHERE last_search_date=?",
+            (today,),
+        ).fetchone()[0]
+
+        # Broj aktivnih korisnika danas
+        active_today = conn.execute(
+            "SELECT COUNT(*) FROM users WHERE last_search_date=?",
+            (today,),
+        ).fetchone()[0]
+
+        # Ukupno pretraga danas (suma)
+        total_searches = conn.execute(
+            "SELECT COALESCE(SUM(searches_today), 0) FROM users WHERE last_search_date=?",
+            (today,),
+        ).fetchone()[0]
+
+        return {
+            "total_users": total_users,
+            "free_users": free_users,
+            "premium_users": premium_users,
+            "active_today": active_today,
+            "searches_today": int(total_searches),
+        }

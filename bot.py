@@ -241,6 +241,25 @@ async def cmd_setpremium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Greška: {e}")
 
 
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin komanda: /stats — prikaži statistiku"""
+    try:
+        stats = db.get_stats()
+        message = (
+            "📊 *PriceBot Srbija — Statistika*\n\n"
+            f"👥 *Korisnici:*\n"
+            f"  • Ukupno: {stats['total_users']}\n"
+            f"  • Free plan: {stats['free_users']}\n"
+            f"  • Premium plan: {stats['premium_users']}\n\n"
+            f"📈 *Aktivnost danas:*\n"
+            f"  • Aktivnih korisnika: {stats['active_today']}\n"
+            f"  • Pretraga izvršeno: {stats['searches_today']}"
+        )
+        await update.message.reply_text(message, parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Greška pri učitavanju statistike: {e}")
+
+
 # ─── Message handler ──────────────────────────────────────────────────────────
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -450,6 +469,7 @@ def main():
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("setpremium", cmd_setpremium))
+    app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
     app.job_queue.run_repeating(check_ads_job, interval=43200, first=60)
