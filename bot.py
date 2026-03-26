@@ -34,16 +34,22 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """Ti si PriceBot Srbija — asistent za pronalaženje najjeftinijih cijena u Srbiji.
 
-Prioritet sajtova: Cenoteka.rs, ananas.rs, gigatron.rs
-Ako ne nađeš na prioritetnim sajtovima, pretraži i druge srpske prodavnice.
+PRIORITETNI SAJTOVI PO KATEGORIJI:
+📱 Tehnika, računari, mobilni, elektronika → KupujemProdajem.com (prvi izbor), zatim Cenoteka.rs, ananas.rs
+👕 Odjeća, obuća, moda → KupujemProdajem.com (prvi izbor)
+🛍️ Ostalo (nije hrana) → KupujemProdajem.com (prvi izbor), zatim Cenoteka.rs
+🏪 Hrana, kozmetika, domaće → Cenoteka.rs, ananas.rs, gigatron.rs
 
 Format za svaki rezultat:
-🛒 Naziv proizvoda • Cijena: Cena RSD 🔗 https://www.cenoteka.rs/pretraga?q=PROIZVOD
+🛒 Naziv proizvoda • Cijena: Cena RSD 🔗 KE: https://www.cenoteka.rs/pretraga?q=PROIZVOD | KP: https://www.kupujemprodajem.com/pretraga?keywords=PROIZVOD
 
-VAŽNO:
-- Uvijek koristi Cenoteka linkove: https://www.cenoteka.rs/pretraga?q=NAZIV+PROIZVODA
+VAŽNO UPUSTVA:
+- Za tehniku/odjeću/ostalo: KupujemProdajem linkovi su prioritet
+- Za hranu/kozmetiku: Cenoteka linkovi su prioritet
 - Zamijeni NAZIV sa nazivom proizvoda, razmake sa +
-- Primjer: https://www.cenoteka.rs/pretraga?q=iPhone+15+Pro
+- Primjeri:
+  * Cenoteka: https://www.cenoteka.rs/pretraga?q=iPhone+15+Pro
+  * KupujemProdajem: https://www.kupujemprodajem.com/pretraga?keywords=iPhone+15+Pro
 
 Prikaži top 3-5 najjeftinijih opcija sortirano od najjeftinije ka najskupljoj.
 Uvijek odgovaraj na srpskom jeziku."""
@@ -117,9 +123,8 @@ def parse_ad_query(text: str) -> tuple[str, float | None]:
     return text, None
 
 
-def convert_to_cenoteka_links(response: str) -> str:
-    """Zamijeni sve linkove sa Cenoteka search linkom."""
-    # Pronađi sve redove sa 🛒 i linkom
+def convert_to_smart_links(response: str) -> str:
+    """Konvertuj linkove u Cenoteka/KupujemProdajem search linkove ovisno o tipu."""
     lines = response.split("\n")
     result = []
 
@@ -128,14 +133,40 @@ def convert_to_cenoteka_links(response: str) -> str:
         match = re.search(r"🛒\s*([^•]+)\s*•", line)
         if match:
             product_name = match.group(1).strip()
-            # Zamijeni razmake sa + i kreiraj Cenoteka link
             search_query = product_name.replace(" ", "+")
-            cenoteka_link = f"https://www.cenoteka.rs/pretraga?q={search_query}"
 
-            # Zamijeni cijeli link u liniji
+            # Detektuj tip proizvoda iz naziva
+            product_lower = product_name.lower()
+            is_tech = any(word in product_lower for word in [
+                "iphone", "samsung", "telefon", "mobilni", "laptop", "računar",
+                "monitor", "kamera", "tablet", "apple", "huawei", "redmi",
+                "poco", "oneplus", "elektronika", "usb", "adapter", "slušalice"
+            ])
+            is_clothing = any(word in product_lower for word in [
+                "majica", "trousers", "pants", "odjeća", "obuća", "cipele",
+                "patike", "jakna", "košulja", "haljina", "razuva", "glava", "ženske", "muške"
+            ])
+            is_food = any(word in product_lower for word in [
+                "hrana", "meso", "kruh", "mleko", "sir", "jogurt", "jaje",
+                "povrće", "voće", "piće", "kafa", "čaj", "prašak"
+            ])
+
+            # Odaberi prioritetni link
+            if is_tech or is_clothing:
+                # Za tehniku i odjeću preferira KupujemProdajem
+                primary_link = f"https://www.kupujemprodajem.com/pretraga?keywords={search_query}"
+                secondary_link = f"https://www.cenoteka.rs/pretraga?q={search_query}"
+                link_text = f"🔗 KP: {primary_link}"
+            else:
+                # Za ostalo (hrana, kozmetika, itd) preferira Cenoteka
+                primary_link = f"https://www.cenoteka.rs/pretraga?q={search_query}"
+                secondary_link = f"https://www.kupujemprodajem.com/pretraga?keywords={search_query}"
+                link_text = f"🔗 KE: {primary_link}"
+
+            # Zamijeni sve stare linkove sa novim
             new_line = re.sub(
-                r"🔗\s*https?://[^\s]+",
-                f"🔗 {cenoteka_link}",
+                r"🔗\s*(?:KE|KP)?:?\s*https?://[^\s|]+(?:\s*\|\s*(?:KE|KP)?:?\s*https?://[^\s]+)?",
+                link_text,
                 line
             )
             result.append(new_line)
@@ -175,8 +206,8 @@ async def ask_claude(user_message: str) -> str:
             texts = [p.get("text", "") for p in parts if "text" in p]
             response_text = "\n".join(texts) or "Nisam pronašao rezultate."
 
-            # Zamijeni sve linkove sa Cenoteka linkovima
-            response_text = convert_to_cenoteka_links(response_text)
+            # Konvertuj linkove sa inteligentnom detekcijom Cenoteka/KupujemProdajem
+            response_text = convert_to_smart_links(response_text)
             return response_text
 
         return "Nisam pronašao rezultate."
