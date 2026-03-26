@@ -35,24 +35,32 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """Ti si PriceBot Srbija — asistent za pronalaženje najjeftinijih cijena u Srbiji.
 
 PRIORITETNI SAJTOVI PO KATEGORIJI:
-📱 Tehnika, računari, mobilni, elektronika → KupujemProdajem.com (prvi izbor), zatim Cenoteka.rs, ananas.rs
+📱 Tehnika, računari, mobilni, elektronika → KupujemProdajem.com (prvi izbor)
 👕 Odjeća, obuća, moda → KupujemProdajem.com (prvi izbor)
-🛍️ Ostalo (nije hrana) → KupujemProdajem.com (prvi izbor), zatim Cenoteka.rs
-🏪 Hrana, kozmetika, domaće → Cenoteka.rs, ananas.rs, gigatron.rs
+🛍️ Ostalo (nije hrana) → KupujemProdajem.com (prvi izbor)
+🏪 Hrana, kozmetika, domaće → Cenoteka.rs (prvi izbor)
 
-Format za svaki rezultat:
-🛒 Naziv proizvoda • Cijena: Cena RSD 🔗 KE: https://www.cenoteka.rs/pretraga?q=PROIZVOD | KP: https://www.kupujemprodajem.com/pretraga?keywords=PROIZVOD
+FORMAT ODGOVORA - STROGO SLIJEDI:
+🛒 Naziv proizvoda • Cijena: XXX RSD • KP: https://www.kupujemprodajem.com/pretraga?keywords=NAZIV+PROIZVODA
 
-VAŽNO UPUSTVA:
-- Za tehniku/odjeću/ostalo: KupujemProdajem linkovi su prioritet
-- Za hranu/kozmetiku: Cenoteka linkovi su prioritet
-- Zamijeni NAZIV sa nazivom proizvoda, razmake sa +
-- Primjeri:
-  * Cenoteka: https://www.cenoteka.rs/pretraga?q=iPhone+15+Pro
-  * KupujemProdajem: https://www.kupujemprodajem.com/pretraga?keywords=iPhone+15+Pro
+GDJE:
+- Zamijeni NAZIV sa nazivom proizvoda
+- Zamijeni XXX sa cijenom
+- Zamijeni razmake sa + u URL-u
+- KP = KupujemProdajem (za tehniku, odjeću, ostalo)
+- KE = Cenoteka (samo ako nema KP)
 
-Prikaži top 3-5 najjeftinijih opcija sortirano od najjeftinije ka najskupljoj.
-Uvijek odgovaraj na srpskom jeziku."""
+PRIMJERI TOČNOG FORMATA:
+✅ 🛒 iPhone 15 Pro • Cijena: 1200 RSD • KP: https://www.kupujemprodajem.com/pretraga?keywords=iPhone+15+Pro
+✅ 🛒 Samsung TV 55" • Cijena: 450 RSD • KP: https://www.kupujemprodajem.com/pretraga?keywords=Samsung+TV+55
+✅ 🛒 Kruh • Cijena: 150 RSD • KE: https://www.cenoteka.rs/pretraga?q=Kruh
+
+PRAVILA:
+- Prikaži SAMO 3-5 najjeftinijih opcija
+- Sortiraj od najjeftinije ka najskupljoj
+- Ako proizvod nije dostupan, predloži sličan proizvod (npr iPhone 15 ako nema iPhone 17)
+- Uključi [KP] ili [KE] u formatu TOČNO kako je navedeno
+- Odgovori na srpskom jeziku"""
 
 # ─── Labele dugmadi (konstante, koriste se za match u message_handleru) ────────
 
@@ -129,8 +137,11 @@ def convert_to_smart_links(response: str) -> str:
     result = []
 
     for line in lines:
-        # Pronađi proizvod između 🛒 i • Cijena
-        match = re.search(r"🛒\s*([^•]+)\s*•", line)
+        # Pronađi proizvod — različiti formati
+        # Format 1: 🛒 Proizvod • Cijena: ...
+        # Format 2: 🛒 Proizvod • KP: https://...
+        # Format 3: * 🛒 Proizvod • KP: https://...
+        match = re.search(r"🛒\s*([^•\n]+?)\s*•", line)
         if match:
             product_name = match.group(1).strip()
             search_query = product_name.replace(" ", "+")
@@ -140,35 +151,35 @@ def convert_to_smart_links(response: str) -> str:
             is_tech = any(word in product_lower for word in [
                 "iphone", "samsung", "telefon", "mobilni", "laptop", "računar",
                 "monitor", "kamera", "tablet", "apple", "huawei", "redmi",
-                "poco", "oneplus", "elektronika", "usb", "adapter", "slušalice"
+                "poco", "oneplus", "elektronika", "usb", "adapter", "slušalice",
+                "tv", "tv)", "proc", "gpu", "ssd", "ram", "gaming"
             ])
             is_clothing = any(word in product_lower for word in [
                 "majica", "trousers", "pants", "odjeća", "obuća", "cipele",
                 "patike", "jakna", "košulja", "haljina", "razuva", "glava", "ženske", "muške"
             ])
-            is_food = any(word in product_lower for word in [
-                "hrana", "meso", "kruh", "mleko", "sir", "jogurt", "jaje",
-                "povrće", "voće", "piće", "kafa", "čaj", "prašak"
-            ])
 
-            # Odaberi prioritetni link
+            # Odaberi prioritetni link ovisno o tipu
             if is_tech or is_clothing:
                 # Za tehniku i odjeću preferira KupujemProdajem
-                primary_link = f"https://www.kupujemprodajem.com/pretraga?keywords={search_query}"
-                secondary_link = f"https://www.cenoteka.rs/pretraga?q={search_query}"
-                link_text = f"🔗 KP: {primary_link}"
+                link_text = f"🔗 KP: https://www.kupujemprodajem.com/pretraga?keywords={search_query}"
             else:
                 # Za ostalo (hrana, kozmetika, itd) preferira Cenoteka
-                primary_link = f"https://www.cenoteka.rs/pretraga?q={search_query}"
-                secondary_link = f"https://www.kupujemprodajem.com/pretraga?keywords={search_query}"
-                link_text = f"🔗 KE: {primary_link}"
+                link_text = f"🔗 KE: https://www.cenoteka.rs/pretraga?q={search_query}"
 
-            # Zamijeni sve stare linkove sa novim
+            # Zamijeni sve vrste linkova sa novim (KE, KP, 🔗, ili bare https://)
             new_line = re.sub(
-                r"🔗\s*(?:KE|KP)?:?\s*https?://[^\s|]+(?:\s*\|\s*(?:KE|KP)?:?\s*https?://[^\s]+)?",
+                r"(•\s*)?(?:KE|KP)?\s*:\s*https?://[^\s\n]+(?:\s*\|\s*(?:KE|KP)?\s*:\s*https?://[^\s\n]+)*",
                 link_text,
                 line
             )
+            # Ako nema linkova, dodaj nakon proizvoda
+            if "http" not in new_line:
+                new_line = re.sub(
+                    r"(🛒\s*[^•]+\s*•)",
+                    f"\\1 {link_text}",
+                    new_line
+                )
             result.append(new_line)
         else:
             result.append(line)
