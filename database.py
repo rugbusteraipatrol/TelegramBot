@@ -61,6 +61,25 @@ def get_or_create_user(user_id: int, username: str) -> dict:
         return dict(row)
 
 
+def get_user(user_id: int) -> dict:
+    """Get user info by ID."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
+        if not row:
+            return {"user_id": user_id, "plan": "free", "searches_today": 0, "last_search_date": None}
+        return dict(row)
+
+
+def count_user_active_ads(user_id: int) -> int:
+    """Count active ads for a user."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) as count FROM tracked_ads WHERE user_id=? AND is_active=1",
+            (user_id,),
+        ).fetchone()
+        return row["count"] if row else 0
+
+
 def can_search(user_id: int) -> bool:
     """Check if user can perform a search today (free plan limit: 1/day)."""
     with get_conn() as conn:
@@ -107,9 +126,11 @@ def set_premium(user_id: int, premium: bool = True):
 
 # ─── Ad tracking ───────────────────────────────────────────────────────────────
 
-def add_tracked_ad(user_id: int, category: str, search_term: str, max_price: float, site: str) -> int:
+def add_tracked_ad(user_id: int, category: str, search_term: str, max_price: float, site: str, is_premium: bool = False) -> int:
     """Add a new ad to track (returns ad ID)."""
-    expires_at = (datetime.now() + timedelta(days=5)).isoformat()
+    # Premium users get 30 days, free users get 5 days
+    days = 30 if is_premium else 5
+    expires_at = (datetime.now() + timedelta(days=days)).isoformat()
     with get_conn() as conn:
         cur = conn.execute(
             """INSERT INTO tracked_ads
