@@ -1,0 +1,17 @@
+{
+  "$schema": "https://railway.app/json-schema.json",
+  "build": {
+    "builder": "nixpacks"
+  },
+  "deploy": {
+    "startCommand": "python bot.py",
+    "restartPolicyMaxRetries": 5,
+    "restartPolicyWindowMs": 60000
+  },
+  "volumes": [
+    {
+      "name": "data",
+      "mountPath": "/app/data"
+    }
+  ]
+}
