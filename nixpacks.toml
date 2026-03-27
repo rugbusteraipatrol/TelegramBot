@@ -1,15 +1,8 @@
 [build]
-# Use Python 3.11 instead of default 3.13
 providers = ["python"]
 
 [variables]
 PYTHON_VERSION = "3.11"
 
-[phases.setup]
-cmds = ["pip install --upgrade pip"]
-
 [phases.install]
 cmds = ["pip install -r requirements.txt"]
-
-[start]
-cmd = "python bot.py"
