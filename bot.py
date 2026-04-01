@@ -122,12 +122,21 @@ WELCOME_TEXT = (
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def parse_ad_query(text: str) -> tuple[str, float | None]:
-    """Parsira 'iPhone 17 700€' → ('iPhone 17', 700.0)."""
-    match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:€|eur|euro)\b", text, re.IGNORECASE)
+    """Parsira 'Samsung Galaxy A55 400€' → ('Samsung Galaxy A55', 400.0)."""
+    # Pronađi cijenu sa € symbol ili eur/euro
+    match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:€|EUR?|EURO|eur|euro)", text, re.IGNORECASE)
+
     if match:
-        price = float(match.group(1).replace(",", "."))
-        term = text[: match.start()].strip()
-        return (term or text), price
+        try:
+            # Parsira broj (zamijeni zarez sa točkom ako je decimalni separator)
+            price_text = match.group(1).replace(",", ".")
+            price = float(price_text)
+            # Izvuče termin (sve prije cijene)
+            term = text[:match.start()].strip()
+            return (term or text), price
+        except ValueError:
+            return text, None
+
     return text, None
 
 

@@ -14,31 +14,66 @@ import re
 import logging
 import requests
 from bs4 import BeautifulSoup
+import time
+import random
 
 logger = logging.getLogger(__name__)
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "sr-RS,sr;q=0.9,en-US;q=0.8",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-}
-TIMEOUT = 15
+# Diversos User-Agents da izbjegnemo bot detektovanje
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+]
+
+def get_headers():
+    """Vraća random User-Agent da izbjegnemo blokade."""
+    return {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept-Language": "sr-RS,sr;q=0.9,en-US;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": "https://www.google.com/",
+    }
+
+TIMEOUT = 20  # Povećan timeout
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _get(url: str, params: dict = None) -> BeautifulSoup | None:
-    try:
-        resp = requests.get(url, params=params, headers=HEADERS, timeout=TIMEOUT)
-        resp.raise_for_status()
-        return BeautifulSoup(resp.text, "html.parser")
-    except Exception as e:
-        logger.error(f"HTTP greška [{url}]: {e}")
-        return None
+    """Fetch URL sa retry logikom i random delay."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # Dodaj random delay (0.5-2s) da izbjegnemo throttling
+            time.sleep(random.uniform(0.5, 2.0))
+
+            resp = requests.get(url, params=params, headers=get_headers(), timeout=TIMEOUT)
+            resp.raise_for_status()
+
+            if resp.text and len(resp.text) > 100:  # Provjeri da li je odgovor validan
+                return BeautifulSoup(resp.text, "html.parser")
+            else:
+                logger.warning(f"⚠️ HTTP: Prazan ili minimalan odgovor od {url}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)  # Čekaj prije retry
+                    continue
+                return None
+
+        except requests.exceptions.Timeout:
+            logger.warning(f"⏱️ Timeout [{url}] pokušaj {attempt + 1}/{max_retries}")
+            if attempt < max_retries - 1:
+                time.sleep(3)
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"🔌 Greška pri konekciji [{url}] pokušaj {attempt + 1}/{max_retries}")
+            if attempt < max_retries - 1:
+                time.sleep(3)
+        except Exception as e:
+            logger.error(f"❌ HTTP greška [{url}]: {e}")
+            return None
+
+    return None
 
 
 def _parse_price(text: str) -> float | None:
