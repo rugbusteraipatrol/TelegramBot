@@ -404,16 +404,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Pretraži cijenu ────────────────────────────────────────────────────────
 
     if text == BTN_SEARCH:
-        # TODO: PRIVREMENO UKLONJEN LIMIT ZA TESTING
-        # if not is_premium and not db.can_search(user.id):
-        #     await update.message.reply_text(
-        #         "🚫 Iskoristio si 1 besplatnu pretragu za danas.\n\n"
-        #         f"💎 Nadogradi na *Premium* za neograničene pretrage!\n\n"
-        #         f"👉 [Aktiviraj Premium]({STRIPE_LINK})",
-        #         parse_mode="Markdown",
-        #         reply_markup=MAIN_KEYBOARD,
-        #     )
-        #     return
+        if not is_premium and not db.can_search(user.id):
+            await update.message.reply_text(
+                "🚫 Iskoristio si 1 besplatnu pretragu za danas.\n\n"
+                f"💎 Nadogradi na *Premium* za neograničene pretrage!\n\n"
+                f"👉 [Aktiviraj Premium]({STRIPE_LINK})",
+                parse_mode="Markdown",
+                reply_markup=MAIN_KEYBOARD,
+            )
+            return
         limit_note = "" if is_premium else "\n_Imaš 1 besplatnu pretragu dnevno._"
         context.user_data["state"] = "await_search"
         await update.message.reply_text(
