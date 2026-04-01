@@ -8,7 +8,7 @@ DATA_DIR = "/app/data" if os.path.exists("/app") else "."
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "pricebot.db")
 
-print(f"📊 Using database: {DB_PATH}")
+print(f"Using database: {DB_PATH}")
 
 
 def get_conn():
