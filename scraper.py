@@ -144,12 +144,16 @@ def scrape_polovniautomobili(search_term: str, max_price: float | None = None) -
 def scrape_kupujemprodajem(search_term: str, max_price: float | None = None) -> list[dict]:
     results = []
     url = "https://www.kupujemprodajem.com/pretraga"
+
+    # Za mobilne telefone: postavi minimum cijenu (izbegni dijelove i dodatnu opremu)
+    min_price = 150 if "iphone" in search_term.lower() or "telefon" in search_term.lower() else 10
+
     params = {
         "keywords": search_term,
         "currency": "eur",
         **({"priceTo": int(max_price)} if max_price else {}),
     }
-    logger.info(f"🔗 KP Scraping: {url} | keywords='{search_term}' | max_price={max_price}")
+    logger.info(f"🔗 KP Scraping: {url} | keywords='{search_term}' | max_price={max_price} | min_price={min_price}")
 
     soup = _get(url, params=params)
     if not soup:
@@ -166,22 +170,33 @@ def scrape_kupujemprodajem(search_term: str, max_price: float | None = None) -> 
 
     for item in items[:12]:
         try:
-            # Za article tagove - pronađi a i span sa href/price
-            title_el = item.find("a", href=True) or item.find("h2") or item.find("h3")
-            price_el = item.find("span") or item.find("p")
+            # Nova KP struktura: AdItem_adHolder sa AdItem_price__VZ_at
+            title_el = None
+            price_el = None
 
-            # Fallback na stare selektore
+            # Pronađi prvi link koji ima dovolno dugačak tekst (naslov)
+            links = item.find_all("a", href=True)
+            for link in links:
+                text = link.get_text(strip=True)
+                if len(text) > 10:  # Naslov mora biti duži od 10 karaktera
+                    title_el = link
+                    break
+
+            # Pronađi cijenu sa novim selectorom
+            price_el = item.select_one("div.AdItem_price__VZ_at, div.AdItem_priceHolder__yVMOe")
+
+            # Fallback na stare selektore ako novi ne rade
             if not title_el:
-                title_el = item.select_one(
-                    "h3 a, .offer-title a, .kp-ad-name a, a.offer-title"
+                title_el = item.find("a", href=True) or item.select_one(
+                    "h3 a, h2 a, .offer-title a, .kp-ad-name a"
                 )
             if not price_el:
                 price_el = item.select_one(
-                    ".price-box, .offer-price, .kp-ad-price, span.price"
+                    "span.price, .price-box, .offer-price, .kp-ad-price"
                 )
 
-            if not title_el:
-                logger.debug("⚠️ KP: Title element nije pronađen, skipam item")
+            if not title_el or not price_el:
+                logger.debug("⚠️ KP: Title ili price element nije pronađen, skipam item")
                 continue
 
             title = title_el.get_text(strip=True)
@@ -189,11 +204,20 @@ def scrape_kupujemprodajem(search_term: str, max_price: float | None = None) -> 
             if href and not href.startswith("http"):
                 href = "https://www.kupujemprodajem.com" + href
 
-            price_text = price_el.get_text(strip=True) if price_el else ""
+            price_text = price_el.get_text(strip=True)
             price = _parse_price(price_text)
 
+            if not price:  # Ako nema cijene, skipuj
+                logger.debug(f"⚠️ KP: Nije moguće parsirati cijenu '{price_text}', skipam")
+                continue
+
+            # Filtriera po min i max cijeni
+            if price < min_price:
+                logger.debug(f"⚠️ KP: Cijena {price} ispod minimuma {min_price}, skipam")
+                continue
+
             if not _matches_price(price, max_price):
-                logger.debug(f"⚠️ KP: Cijena {price_text} iznad limita {max_price}, skipam")
+                logger.debug(f"⚠️ KP: Cijena {price} iznad limita {max_price}, skipam")
                 continue
 
             result = {"title": title, "price": price, "price_text": price_text, "url": href}
