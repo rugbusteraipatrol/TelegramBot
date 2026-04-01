@@ -239,29 +239,35 @@ async def ask_claude(user_message: str) -> str:
 
 async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
     """Izvršava AI pretragu i šalje rezultat korisniku."""
-    if not is_premium and not db.can_search(user_id):
-        await update.message.reply_text(
-            "🚫 Iskoristio si 1 besplatnu pretragu za danas.\n\n"
-            f"💎 Nadogradi na *Premium* za neograničene pretrage!\n\n"
-            f"👉 [Aktiviraj Premium]({STRIPE_LINK})",
-            parse_mode="Markdown",
-            reply_markup=MAIN_KEYBOARD,
-        )
-        return
+    logger.info(f"[SEARCH] Korisnik {user_id}: '{text}'")
+
+    # TODO: PRIVREMENO UKLONJEN SEARCH LIMIT ZA TESTING
+    # if not is_premium and not db.can_search(user_id):
+    #     logger.warning(f"[SEARCH] Korisnik {user_id} dostigao dnevni limit")
+    #     await update.message.reply_text(
+    #         "🚫 Iskoristio si 1 besplatnu pretragu za danas.\n\n"
+    #         f"💎 Nadogradi na *Premium* za neograničene pretrage!\n\n"
+    #         f"👉 [Aktiviraj Premium]({STRIPE_LINK})",
+    #         parse_mode="Markdown",
+    #         reply_markup=MAIN_KEYBOARD,
+    #     )
+    #     return
 
     thinking = await update.message.reply_text("🔍 Pretražujem cijene, molim sačekaj...")
 
     try:
         if not is_premium:
             db.increment_search(user_id)
+        logger.info(f"[SEARCH] Pozivam ask_claude za '{text}'")
         reply = await ask_claude(text)
+        logger.info(f"[SEARCH] Dobio odgovor od Gemini")
     except Exception as e:
+        logger.error(f"[SEARCH] EXCEPTION: {type(e).__name__}: {e}", exc_info=True)
         if "429" in str(e) or "rate_limit" in str(e).lower():
             reply = "⚠️ Previše zahteva. Pokušaj ponovo za nekoliko sekundi."
         elif "401" in str(e) or "authentication" in str(e).lower():
             reply = "❌ Greška u konfiguraciji API ključa. Kontaktiraj admina."
         else:
-            logger.error(f"Gemini greška: {e}")
             reply = "❌ Došlo je do greške pri pretrazi. Pokušaj ponovo."
 
     await thinking.delete()
@@ -334,15 +340,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Prati oglas ────────────────────────────────────────────────────────────
 
     if text == BTN_TRACK:
-        if not is_premium and db.count_user_active_ads(user.id) >= 1:
-            await update.message.reply_text(
-                "🚫 Besplatni plan dozvoljava praćenje samo *1 oglasa*.\n\n"
-                "💎 Nadogradi na *Premium* za neograničeno praćenje!\n\n"
-                f"👉 [Aktiviraj Premium]({STRIPE_LINK})",
-                parse_mode="Markdown",
-                reply_markup=MAIN_KEYBOARD,
-            )
-            return
+        # TODO: PRIVREMENO UKLONJENA AD TRACKING LIMIT ZA TESTING
+        # if not is_premium and db.count_user_active_ads(user.id) >= 1:
+        #     await update.message.reply_text(
+        #         "🚫 Besplatni plan dozvoljava praćenje samo *1 oglasa*.\n\n"
+        #         "💎 Nadogradi na *Premium* za neograničeno praćenje!\n\n"
+        #         f"👉 [Aktiviraj Premium]({STRIPE_LINK})",
+        #         parse_mode="Markdown",
+        #         reply_markup=MAIN_KEYBOARD,
+        #     )
+        #     return
         context.user_data["state"] = "select_category"
         await update.message.reply_text(
             "📂 Izaberi kategoriju oglasa:",
