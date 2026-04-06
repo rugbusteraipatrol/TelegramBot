@@ -86,7 +86,7 @@ PRAVILA:
 
 # ─── Labele dugmadi
 BTN_TRACK = "🔔 Prati oglas"
-BTN_SEARCH = "🔍 Pretraži cijenu"
+BTN_MY_ADS = "⭐ Moji oglasi"
 BTN_PREMIUM = "💎 Premium"
 BTN_HELP = "ℹ️ Pomoć"
 BTN_CANCEL = "❌ Otkaži"
@@ -98,7 +98,7 @@ BTN_OSTALO = "🛍️ Ostalo"
 # ─── Tastature
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
-        [KeyboardButton(BTN_TRACK), KeyboardButton(BTN_SEARCH)],
+        [KeyboardButton(BTN_TRACK), KeyboardButton(BTN_MY_ADS)],
         [KeyboardButton(BTN_PREMIUM), KeyboardButton(BTN_HELP)],
     ],
     resize_keyboard=True,
@@ -528,32 +528,48 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ── Pretraži cijenu
-    if text == BTN_SEARCH:
-        if not is_premium and not db.can_search(user.id):
+    # ── Moji oglasi
+    if text == BTN_MY_ADS:
+        try:
+            # Pokušaj db.get_user_active_ads ako postoji
+            if hasattr(db, 'get_user_active_ads'):
+                ads = db.get_user_active_ads(user.id)
+            else:
+                # Fallback — direktan upit u bazu
+                conn = db.get_conn()
+                cursor = conn.cursor()
+                rows = cursor.execute(
+                    "SELECT * FROM tracked_ads WHERE user_id=? AND is_active=1",
+                    (user.id,)
+                ).fetchall()
+                conn.close()
+                # Konvertuj u dict
+                cols = ["id", "user_id", "category", "search_term", "max_price",
+                        "site", "is_premium", "known_urls", "is_active", "expires_at", "created_at"]
+                ads = [dict(zip(cols, row)) for row in rows]
+        except Exception as e:
+            logger.error(f"Greška pri dohvatu oglasa: {e}")
+            ads = []
+
+        if not ads:
             await update.message.reply_text(
-                "🚫 Iskoristio si 1 besplatnu pretragu za danas.\n\n"
-                f"💎 Nadogradi na *Premium* za neograničene pretrage!\n\n"
-                f"👉 [Aktiviraj Premium]({STRIPE_LINK})",
+                "⭐ *Moji oglasi*\n\nNemaš aktivnih praćenja.\n\nKlikni *🔔 Prati oglas* da dodaš!",
                 parse_mode="Markdown",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
 
-        limit_note = "" if is_premium else "\n_Imaš 1 besplatnu pretragu dnevno._"
-        context.user_data["state"] = "await_search"
+        lines = ["⭐ *Tvoja aktivna praćenja:*\n"]
+        for i, ad in enumerate(ads, 1):
+            price_text = f" do {ad['max_price']:.0f}€" if ad.get("max_price") else ""
+            expires = f"\n   ⏰ Ističe: {str(ad.get('expires_at', ''))[:10]}" if ad.get("expires_at") else ""
+            lines.append(f"{i}. 📦 *{ad['search_term']}*{price_text}\n   📍 {ad['site']}{expires}")
+
         await update.message.reply_text(
-            f"🔍 Šta tražiš? Upiši naziv proizvoda:{limit_note}\n\n"
-            "_Npr: CMF Buds Pro na kupujem prodajem, iPhone 15, Samsung TV 55..._",
+            "\n".join(lines),
             parse_mode="Markdown",
             reply_markup=MAIN_KEYBOARD,
         )
-        return
-
-    # ── Upit za pretragu primljen
-    if state == "await_search":
-        context.user_data.clear()
-        await do_search(update, user.id, text, is_premium)
         return
 
     # ── Premium info
