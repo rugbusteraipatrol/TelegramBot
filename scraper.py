@@ -104,23 +104,37 @@ def _matches_price(price: float | None, max_price: float | None) -> bool:
 
 def scrape_polovniautomobili(search_term: str, max_price: float | None = None) -> list[dict]:
     results = []
-    soup = _get(
-        "https://www.polovniautomobili.com/auto-oglasi/pretraga",
-        params={
-            "sort": "renewDate",
-            "q": search_term,
-            **({"price_to": int(max_price)} if max_price else {}),
-        },
-    )
+    url = "https://www.polovniautomobili.com/auto-oglasi/pretraga"
+    params = {
+        "sort": "renewDate",
+        "q": search_term,
+        **({"price_to": int(max_price)} if max_price else {}),
+    }
+    logger.info(f"🔗 PA Scraping: {url} | q='{search_term}' | max_price={max_price}")
+
+    soup = _get(url, params=params)
     if not soup:
+        logger.error(f"❌ PA: Nisu mogli dobiti soup za '{search_term}'")
         return results
 
-    for item in soup.select("article.classified-item, div.entity-body")[:12]:
-        try:
-            title_el = item.select_one("h3 a, .entity-title a, .classified-title a")
-            price_el = item.select_one(".price-box strong, .price-box .price, .entity-price")
+    # Pronađi sve article tagove (nova struktura)
+    items = soup.find_all("article")
+    logger.info(f"📍 PA: Pronađenih {len(items)} oglasa")
 
+    for item in items[:12]:
+        try:
+            # Nova struktura: h2 > a za naslov
+            title_el = item.select_one("h2 a")
             if not title_el:
+                title_el = item.select_one("h3 a, .entity-title a, .classified-title a")
+
+            # Nova struktura: div.price > span za cijenu
+            price_el = item.select_one("div.price span")
+            if not price_el:
+                price_el = item.select_one(".price-box strong, .price-box .price, .entity-price")
+
+            if not title_el or not price_el:
+                logger.debug("⚠️ PA: Title ili price element nije pronađen, skipam")
                 continue
 
             title = title_el.get_text(strip=True)
@@ -128,14 +142,21 @@ def scrape_polovniautomobili(search_term: str, max_price: float | None = None) -
             if href and not href.startswith("http"):
                 href = "https://www.polovniautomobili.com" + href
 
-            price_text = price_el.get_text(strip=True) if price_el else ""
+            price_text = price_el.get_text(strip=True)
             price = _parse_price(price_text)
 
+            if not price:
+                logger.debug(f"⚠️ PA: Nije moguće parsirati cijenu '{price_text}', skipam")
+                continue
+
             if not _matches_price(price, max_price):
+                logger.debug(f"⚠️ PA: Cijena {price} iznad limita {max_price}, skipam")
                 continue
 
             results.append({"title": title, "price": price, "price_text": price_text, "url": href})
-        except Exception:
+            logger.debug(f"  ✓ PA: {title[:40]}... | {price_text}")
+        except Exception as e:
+            logger.debug(f"⚠️ PA: Greška pri parsiranju: {e}")
             continue
 
     return results
