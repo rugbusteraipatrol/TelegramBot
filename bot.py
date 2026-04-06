@@ -32,53 +32,54 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Ti si PriceBot Srbija — asistent za pronalaženje najjeftinijih cijena u Srbiji.
+# ─── KP ključne riječi — ako korisnik pomene ovo, idemo direktno na KP scraping
+KP_KEYWORDS = [
+    "kupujem prodajem", "kupujemprodajem", "kp", "polovno", "polovni",
+    "rabljeno", "second hand", "oglas", "oglasi", "jeftino"
+]
 
-PRIORITETNI SAJTOVI PO KATEGORIJI:
-📱 Tehnika, računari, mobilni, elektronika → KupujemProdajem.com (prvi izbor)
-👕 Odjeća, obuća, moda → KupujemProdajem.com (prvi izbor)
-🛍️ Ostalo (nije hrana) → KupujemProdajem.com (prvi izbor)
-🏪 Hrana, kozmetika, domaće → Cenoteka.rs (prvi izbor)
+# ─── Tehničke kategorije — za KP scraping čak i bez eksplicitnog "kp"
+TECH_KEYWORDS = [
+    "iphone", "samsung", "xiaomi", "redmi", "poco", "huawei", "oneplus",
+    "telefon", "mobitel", "laptop", "notebook", "računar", "kompjuter",
+    "monitor", "tv", "televizor", "tablet", "ipad", "airpods", "slušalice",
+    "grafička", "gpu", "cpu", "procesor", "ssd", "ram", "memorija",
+    "playstation", "xbox", "nintendo", "konzola", "gaming", "kamera",
+    "fotoaparat", "punjač", "adapter", "usb", "router", "wifi", "cmf", "nothing",
+    "buds", "earbuds", "watch", "smartwatch", "sat"
+]
 
-FORMAT ODGOVORA - STROGO SLIJEDI:
-🛒 Naziv proizvoda • Cijena: XXX RSD • KP: https://www.kupujemprodajem.com/pretraga?keywords=NAZIV+PROIZVODA
+SYSTEM_PROMPT_WEBSHOP = """Ti si PriceBot Srbija — asistent za pronalaženje najjeftinijih cijena u NOVIM webshopovima u Srbiji.
 
-GDJE:
-- Zamijeni NAZIV sa nazivom proizvoda
-- Zamijeni XXX sa cijenom
-- Zamijeni razmake sa + u URL-u
-- KP = KupujemProdajem (za tehniku, odjeću, ostalo)
-- KE = Cenoteka (samo ako nema KP)
+VAŽNO: Tražiš SAMO cijene u regularnim webshopovima (Gigatron, Tehnomanija, Shoppster, Ananas, eModa itd.)
+NE tražiš oglase na KupujemProdajem — to je zasebna funkcija.
 
-PRIMJERI TOČNOG FORMATA:
-✅ 🛒 iPhone 15 Pro • Cijena: 1200 RSD • KP: https://www.kupujemprodajem.com/pretraga?keywords=iPhone+15+Pro
-✅ 🛒 Samsung TV 55" • Cijena: 450 RSD • KP: https://www.kupujemprodajem.com/pretraga?keywords=Samsung+TV+55
-✅ 🛒 Kruh • Cijena: 150 RSD • KE: https://www.cenoteka.rs/pretraga?q=Kruh
+FORMAT ODGOVORA - STROGO SLIJEDI (svaki rezultat u novom redu):
+🏪 Naziv proizvoda • Cijena: XXX RSD • https://direktan-link-na-sajt.rs
 
 PRAVILA:
 - Prikaži SAMO 3-5 najjeftinijih opcija
-- Sortiraj od najjeftinije ka najskupljoj
-- Ako proizvod nije dostupan, predloži sličan proizvod (npr iPhone 15 ako nema iPhone 17)
-- Uključi [KP] ili [KE] u formatu TOČNO kako je navedeno
-- Odgovori na srpskom jeziku"""
+- Sortiraj od najjeftinije ka najskupljoj  
+- Samo direktni linkovi na produktne stranice ili pretragu
+- Odgovori na srpskom jeziku
+- Bez dodatnog teksta, samo lista rezultata"""
 
-# ─── Labele dugmadi (konstante, koriste se za match u message_handleru) ────────
 
-BTN_TRACK   = "🔔 Prati oglas"
-BTN_SEARCH  = "🔍 Pretraži cijenu"
+# ─── Labele dugmadi
+BTN_TRACK = "🔔 Prati oglas"
+BTN_SEARCH = "🔍 Pretraži cijenu"
 BTN_PREMIUM = "💎 Premium"
-BTN_HELP    = "ℹ️ Pomoć"
-BTN_CANCEL  = "❌ Otkaži"
-BTN_AUTO    = "🚗 Auto"
+BTN_HELP = "ℹ️ Pomoć"
+BTN_CANCEL = "❌ Otkaži"
+BTN_AUTO = "🚗 Auto"
 BTN_TEHNIKA = "📱 Tehnika"
-BTN_STAN    = "🏠 Stan"
-BTN_OSTALO  = "🛍️ Ostalo"
+BTN_STAN = "🏠 Stan"
+BTN_OSTALO = "🛍️ Ostalo"
 
-# ─── Tastature ────────────────────────────────────────────────────────────────
-
+# ─── Tastature
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
-        [KeyboardButton(BTN_TRACK),   KeyboardButton(BTN_SEARCH)],
+        [KeyboardButton(BTN_TRACK), KeyboardButton(BTN_SEARCH)],
         [KeyboardButton(BTN_PREMIUM), KeyboardButton(BTN_HELP)],
     ],
     resize_keyboard=True,
@@ -98,10 +99,10 @@ CATEGORY_KEYBOARD = ReplyKeyboardMarkup(
 )
 
 CATEGORY_SITES = {
-    BTN_AUTO:    ("🚗 Auto",    "polovniautomobili.com"),
+    BTN_AUTO: ("🚗 Auto", "polovniautomobili.com"),
     BTN_TEHNIKA: ("📱 Tehnika", "kupujemprodajem.com"),
-    BTN_STAN:    ("🏠 Stan",    "halooglasi.com"),
-    BTN_OSTALO:  ("🛍️ Ostalo",  "kupujemprodajem.com"),
+    BTN_STAN: ("🏠 Stan", "halooglasi.com"),
+    BTN_OSTALO: ("🛍️ Ostalo", "kupujemprodajem.com"),
 }
 
 WELCOME_TEXT = (
@@ -114,100 +115,113 @@ WELCOME_TEXT = (
     "• Neograničeno praćenje oglasa\n"
     "• Praćenje akcija i popusta\n\n"
     "Kako koristiti:\n"
-    "• Napiši šta tražiš npr. 'koliko košta iPhone 15'\n"
+    "• Napiši šta tražiš npr. 'CMF Buds Pro na kupujem prodajem'\n"
+    "• Ili samo naziv proizvoda za webshop cijene\n"
     "• Ili klikni dugme ispod 👇"
 )
 
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+# ─── Helpers
 
 def parse_ad_query(text: str) -> tuple[str, float | None]:
     """Parsira 'Samsung Galaxy A55 400€' → ('Samsung Galaxy A55', 400.0)."""
-    # Pronađi cijenu sa € symbol ili eur/euro
     match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:€|EUR?|EURO|eur|euro)", text, re.IGNORECASE)
-
     if match:
         try:
-            # Parsira broj (zamijeni zarez sa točkom ako je decimalni separator)
             price_text = match.group(1).replace(",", ".")
             price = float(price_text)
-            # Izvuče termin (sve prije cijene)
             term = text[:match.start()].strip()
             return (term or text), price
         except ValueError:
             return text, None
-
     return text, None
 
 
-def convert_to_smart_links(response: str) -> str:
-    """Konvertuj linkove u Cenoteka/KupujemProdajem search linkove ovisno o tipu."""
-    lines = response.split("\n")
-    result = []
+def is_kp_search(text: str) -> bool:
+    """Detektuje da li korisnik traži oglase na KupujemProdajem."""
+    text_lower = text.lower()
+    return any(kw in text_lower for kw in KP_KEYWORDS)
 
-    for line in lines:
-        # Pronađi proizvod — različiti formati
-        # Format 1: 🛒 Proizvod • Cijena: ...
-        # Format 2: 🛒 Proizvod • KP: https://...
-        # Format 3: * 🛒 Proizvod • KP: https://...
-        match = re.search(r"🛒\s*([^•\n]+?)\s*•", line)
-        if match:
-            product_name = match.group(1).strip()
-            search_query = product_name.replace(" ", "+")
 
-            # Detektuj tip proizvoda iz naziva
-            product_lower = product_name.lower()
-            is_tech = any(word in product_lower for word in [
-                "iphone", "samsung", "telefon", "mobilni", "laptop", "računar",
-                "monitor", "kamera", "tablet", "apple", "huawei", "redmi",
-                "poco", "oneplus", "elektronika", "usb", "adapter", "slušalice",
-                "tv", "tv)", "proc", "gpu", "ssd", "ram", "gaming"
-            ])
-            is_clothing = any(word in product_lower for word in [
-                "majica", "trousers", "pants", "odjeća", "obuća", "cipele",
-                "patike", "jakna", "košulja", "haljina", "razuva", "glava", "ženske", "muške"
-            ])
+def is_tech_search(text: str) -> bool:
+    """Detektuje da li korisnik traži tehničke proizvode."""
+    text_lower = text.lower()
+    return any(kw in text_lower for kw in TECH_KEYWORDS)
 
-            # Odaberi prioritetni link ovisno o tipu
-            if is_tech or is_clothing:
-                # Za tehniku i odjeću preferira KupujemProdajem
-                link_text = f"🔗 KP: https://www.kupujemprodajem.com/pretraga?keywords={search_query}"
-            else:
-                # Za ostalo (hrana, kozmetika, itd) preferira Cenoteka
-                link_text = f"🔗 KE: https://www.cenoteka.rs/pretraga?q={search_query}"
 
-            # Zamijeni sve vrste linkova sa novim (KE, KP, 🔗, ili bare https://)
-            new_line = re.sub(
-                r"(•\s*)?(?:KE|KP)?\s*:\s*https?://[^\s\n]+(?:\s*\|\s*(?:KE|KP)?\s*:\s*https?://[^\s\n]+)*",
-                link_text,
-                line
-            )
-            # Ako nema linkova, dodaj nakon proizvoda
-            if "http" not in new_line:
-                new_line = re.sub(
-                    r"(🛒\s*[^•]+\s*•)",
-                    f"\\1 {link_text}",
-                    new_line
-                )
-            result.append(new_line)
+def extract_search_term(text: str) -> str:
+    """Uklanja KP ključne riječi iz upita da dobijemo čist naziv proizvoda."""
+    text_clean = text
+    remove_phrases = [
+        "nadji najpovoljnije na kupujem prodajem",
+        "nađi najpovoljnije na kupujem prodajem",
+        "na kupujem prodajem",
+        "kupujem prodajem",
+        "kupujemprodajem",
+        "na kp",
+        " kp",
+        "polovno",
+        "rabljeno",
+        "najjeftinije",
+        "najpovoljnije",
+        "nađi",
+        "nadji",
+        "pronađi",
+        "pronadji",
+        "koliko košta",
+        "koliko kosta",
+        "cijena",
+        "cena",
+        "gdje kupiti",
+        "gde kupiti",
+    ]
+    for phrase in remove_phrases:
+        text_clean = re.sub(phrase, "", text_clean, flags=re.IGNORECASE).strip()
+    return text_clean.strip()
+
+
+def format_kp_results(results: list[dict], search_term: str) -> str:
+    """Formatuje KP scraping rezultate u lijepu poruku."""
+    if not results:
+        # Nema rezultata — vrati direktan link na pretragu
+        kp_url = f"https://www.kupujemprodajem.com/pretraga?keywords={search_term.replace(' ', '+')}"
+        return (
+            f"❌ Nisam pronašao direktne rezultate za *{search_term}* na KupujemProdajem.\n\n"
+            f"🔗 Pretražite ručno: [KupujemProdajem]({kp_url})"
+        )
+
+    lines = [f"🛍️ *Rezultati za: {search_term}* (KupujemProdajem)\n"]
+    for i, r in enumerate(results[:5], 1):
+        title = r.get("title", "Nepoznat naziv")[:60]
+        price_text = r.get("price_text", "Cijena nije navedena")
+        url = r.get("url", "")
+
+        # Ako URL nije kompletan, dodaj domenu
+        if url and not url.startswith("http"):
+            url = "https://www.kupujemprodajem.com" + url
+
+        if url:
+            lines.append(f"{i}. 🛒 [{title}]({url})\n   💰 {price_text}")
         else:
-            result.append(line)
+            lines.append(f"{i}. 🛒 {title}\n   💰 {price_text}")
 
-    return "\n".join(result)
+    # Dodaj link za širu pretragu
+    kp_url = f"https://www.kupujemprodajem.com/pretraga?keywords={search_term.replace(' ', '+')}"
+    lines.append(f"\n🔍 [Prikaži sve oglase na KP]({kp_url})")
+
+    return "\n".join(lines)
 
 
-async def ask_claude(user_message: str) -> str:
-    """Šalje upit Gemini 2.0 Flash-u sa Google Search toolom i vraća odgovor."""
+async def ask_gemini_webshop(user_message: str) -> str:
+    """Šalje upit Gemini-u za webshop cijene (Gigatron, Tehnomanija itd.)"""
     try:
         payload = {
             "contents": [{
                 "role": "user",
                 "parts": [{"text": user_message}]
             }],
-            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-            "tools": [{
-                "googleSearch": {}
-            }]
+            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT_WEBSHOP}]},
+            "tools": [{"googleSearch": {}}]
         }
 
         async with httpx.AsyncClient() as httpx_client:
@@ -219,16 +233,11 @@ async def ask_claude(user_message: str) -> str:
             response.raise_for_status()
             data = response.json()
 
-        # Ekstrahuj tekst iz odgovora
         if "candidates" in data and data["candidates"]:
             content = data["candidates"][0].get("content", {})
             parts = content.get("parts", [])
             texts = [p.get("text", "") for p in parts if "text" in p]
-            response_text = "\n".join(texts) or "Nisam pronašao rezultate."
-
-            # Konvertuj linkove sa inteligentnom detekcijom Cenoteka/KupujemProdajem
-            response_text = convert_to_smart_links(response_text)
-            return response_text
+            return "\n".join(texts) or "Nisam pronašao rezultate."
 
         return "Nisam pronašao rezultate."
 
@@ -238,29 +247,49 @@ async def ask_claude(user_message: str) -> str:
 
 
 async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
-    """Izvršava AI pretragu i šalje rezultat korisniku."""
+    """
+    Glavna search logika:
+    - Ako korisnik traži "na kupujem prodajem" ili tehničke proizvode → direktan KP scraping
+    - Inače → Gemini webshop pretraga
+    """
     logger.info(f"[SEARCH] Korisnik {user_id}: '{text}'")
 
-    # TODO: PRIVREMENO UKLONJEN SEARCH LIMIT ZA TESTING
-    # if not is_premium and not db.can_search(user_id):
-    #     logger.warning(f"[SEARCH] Korisnik {user_id} dostigao dnevni limit")
-    #     await update.message.reply_text(
-    #         "🚫 Iskoristio si 1 besplatnu pretragu za danas.\n\n"
-    #         f"💎 Nadogradi na *Premium* za neograničene pretrage!\n\n"
-    #         f"👉 [Aktiviraj Premium]({STRIPE_LINK})",
-    #         parse_mode="Markdown",
-    #         reply_markup=MAIN_KEYBOARD,
-    #     )
-    #     return
-
-    thinking = await update.message.reply_text("🔍 Pretražujem cijene, molim sačekaj...")
+    thinking = await update.message.reply_text("🔍 Pretražujem, molim sačekaj...")
 
     try:
         if not is_premium:
             db.increment_search(user_id)
-        logger.info(f"[SEARCH] Pozivam ask_claude za '{text}'")
-        reply = await ask_claude(text)
-        logger.info(f"[SEARCH] Dobio odgovor od Gemini")
+
+        kp_mode = is_kp_search(text)
+        tech_mode = is_tech_search(text)
+
+        if kp_mode or tech_mode:
+            # ── Direktan KP scraping
+            search_term = extract_search_term(text)
+            logger.info(f"[SEARCH] KP mod | term: '{search_term}' | kp_keyword={kp_mode} | tech={tech_mode}")
+
+            await thinking.edit_text(f"🔍 Tražim *{search_term}* na KupujemProdajem...")
+
+            # Scraping u asyncio thread da ne blokira bota
+            import asyncio
+            results = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: scraper.scrape_kupujemprodajem(search_term)
+            )
+
+            reply = format_kp_results(results, search_term)
+
+            # Ako KP ne vrati ništa i nije eksplicitno tražen KP, pokušaj Gemini kao fallback
+            if not results and not kp_mode:
+                logger.info("[SEARCH] KP vratio 0 rezultata, fallback na Gemini")
+                await thinking.edit_text("🔍 Pretražujem webshopove...")
+                reply = await ask_gemini_webshop(text)
+
+        else:
+            # ── Gemini webshop pretraga
+            logger.info(f"[SEARCH] Gemini webshop mod za: '{text}'")
+            reply = await ask_gemini_webshop(text)
+
     except Exception as e:
         logger.error(f"[SEARCH] EXCEPTION: {type(e).__name__}: {e}", exc_info=True)
         if "429" in str(e) or "rate_limit" in str(e).lower():
@@ -271,10 +300,10 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
             reply = "❌ Došlo je do greške pri pretrazi. Pokušaj ponovo."
 
     await thinking.delete()
-    await update.message.reply_text(reply, reply_markup=MAIN_KEYBOARD)
+    await update.message.reply_text(reply, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
 
 
-# ─── Command handleri ─────────────────────────────────────────────────────────
+# ─── Command handleri
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -305,19 +334,19 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = (
             "📊 *PriceBot Srbija — Statistika*\n\n"
             f"👥 *Korisnici:*\n"
-            f"  • Ukupno: {stats['total_users']}\n"
-            f"  • Free plan: {stats['free_users']}\n"
-            f"  • Premium plan: {stats['premium_users']}\n\n"
+            f" • Ukupno: {stats['total_users']}\n"
+            f" • Free plan: {stats['free_users']}\n"
+            f" • Premium plan: {stats['premium_users']}\n\n"
             f"📈 *Aktivnost danas:*\n"
-            f"  • Aktivnih korisnika: {stats['active_today']}\n"
-            f"  • Pretraga izvršeno: {stats['searches_today']}"
+            f" • Aktivnih korisnika: {stats['active_today']}\n"
+            f" • Pretraga izvršeno: {stats['searches_today']}"
         )
         await update.message.reply_text(message, parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ Greška pri učitavanju statistike: {e}")
 
 
-# ─── Message handler ──────────────────────────────────────────────────────────
+# ─── Message handler
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -328,8 +357,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_premium = user_info["plan"] == "premium"
     state = context.user_data.get("state")
 
-    # ── Otkaži / Nazad ─────────────────────────────────────────────────────────
-
+    # ── Otkaži / Nazad
     if text == BTN_CANCEL:
         context.user_data.clear()
         await update.message.reply_text(
@@ -337,19 +365,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ── Prati oglas ────────────────────────────────────────────────────────────
-
+    # ── Prati oglas
     if text == BTN_TRACK:
-        # TODO: PRIVREMENO UKLONJENA AD TRACKING LIMIT ZA TESTING
-        # if not is_premium and db.count_user_active_ads(user.id) >= 1:
-        #     await update.message.reply_text(
-        #         "🚫 Besplatni plan dozvoljava praćenje samo *1 oglasa*.\n\n"
-        #         "💎 Nadogradi na *Premium* za neograničeno praćenje!\n\n"
-        #         f"👉 [Aktiviraj Premium]({STRIPE_LINK})",
-        #         parse_mode="Markdown",
-        #         reply_markup=MAIN_KEYBOARD,
-        #     )
-        #     return
         context.user_data["state"] = "select_category"
         await update.message.reply_text(
             "📂 Izaberi kategoriju oglasa:",
@@ -357,8 +374,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ── Kategorija izabrana ────────────────────────────────────────────────────
-
+    # ── Kategorija izabrana
     if text in CATEGORY_SITES and state == "select_category":
         emoji_name, site = CATEGORY_SITES[text]
         context.user_data.update({
@@ -371,14 +387,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"*{emoji_name}* → pretraga na `{site}`\n\n"
             "📝 Upiši naziv i maksimalnu cijenu:\n"
             "_Npr: iPhone 17 700€_\n\n"
-            "_Ako ne napiješ cijenu, praćenje je bez limita cijene._",
+            "_Ako ne napišeš cijenu, praćenje je bez limita cijene._",
             parse_mode="Markdown",
             reply_markup=MAIN_KEYBOARD,
         )
         return
 
-    # ── Upit za oglas primljen ─────────────────────────────────────────────────
-
+    # ── Upit za oglas primljen
     if state == "await_ad_query":
         search_term, max_price = parse_ad_query(text)
         site = context.user_data.get("selected_site", "kupujemprodajem.com")
@@ -408,8 +423,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ── Pretraži cijenu ────────────────────────────────────────────────────────
-
+    # ── Pretraži cijenu
     if text == BTN_SEARCH:
         if not is_premium and not db.can_search(user.id):
             await update.message.reply_text(
@@ -420,25 +434,24 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=MAIN_KEYBOARD,
             )
             return
+
         limit_note = "" if is_premium else "\n_Imaš 1 besplatnu pretragu dnevno._"
         context.user_data["state"] = "await_search"
         await update.message.reply_text(
             f"🔍 Šta tražiš? Upiši naziv proizvoda:{limit_note}\n\n"
-            "_Npr: iPhone 15 Pro, Samsung TV 55, Nike Air Max..._",
+            "_Npr: CMF Buds Pro na kupujem prodajem, iPhone 15, Samsung TV 55..._",
             parse_mode="Markdown",
             reply_markup=MAIN_KEYBOARD,
         )
         return
 
-    # ── Upit za pretragu primljen ──────────────────────────────────────────────
-
+    # ── Upit za pretragu primljen
     if state == "await_search":
         context.user_data.clear()
         await do_search(update, user.id, text, is_premium)
         return
 
-    # ── Premium info ───────────────────────────────────────────────────────────
-
+    # ── Premium info
     if text == BTN_PREMIUM:
         await update.message.reply_text(
             "💎 *Premium plan — 3€/mj*\n\n"
@@ -452,8 +465,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ── Pomoć ──────────────────────────────────────────────────────────────────
-
+    # ── Pomoć
     if text == BTN_HELP:
         context.user_data.clear()
         await update.message.reply_text(
@@ -461,32 +473,30 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ── Slobodan tekst → AI pretraga ───────────────────────────────────────────
-
+    # ── Slobodan tekst → search
     await do_search(update, user.id, text, is_premium)
 
 
-# ─── Background job — provjera oglasa svakih 1h ───────────────────────────────
+# ─── Background job — provjera oglasa
 
 async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
     logger.info("🔍 Pokrenuta provjera aktivnih oglasa...")
     logger.info("=" * 80)
 
-    # Debug: Provjeri sve oglase u bazi (ne samo aktivne)
     try:
         conn = db.get_conn()
         cursor = conn.cursor()
         all_ads_raw = cursor.execute("SELECT * FROM tracked_ads").fetchall()
         logger.info(f"📊 UKUPNO OGLASA U BAZI: {len(all_ads_raw)}")
         for row in all_ads_raw:
-            logger.info(f"  - ID:{row[0]} | User:{row[1]} | Termin:'{row[3]}' | Site:{row[5]} | Active:{row[8]} | Expires:{row[9]}")
+            logger.info(f" - ID:{row[0]} | User:{row[1]} | Termin:'{row[3]}' | Site:{row[5]} | Active:{row[8]} | Expires:{row[9]}")
         conn.close()
     except Exception as e:
         logger.error(f"❌ Greška pri čitanju baze: {e}")
 
-    # Dobij samo aktivne oglase
     ads = db.get_all_active_ads()
     logger.info(f"📊 AKTIVNIH OGLASA: {len(ads)}")
+
     if not ads:
         logger.warning("⚠️ NEMA AKTIVNIH OGLASA ZA PROVJERU!")
         logger.info("=" * 80)
@@ -497,20 +507,14 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
 
     for ad in ads:
         total_checked += 1
-        logger.info(f"\n📌 PROVJERA OGLASA #{ad['id']}")
-        logger.info(f"  Korisnik: {ad['user_id']}")
-        logger.info(f"  Termin: {ad['search_term']}")
-        logger.info(f"  Sajt: {ad['site']}")
-        logger.info(f"  Max cijena: {ad.get('max_price')}")
-        logger.info(f"  Istekao: {ad['expires_at']}")
+        logger.info(f"\n📌 PROVJERA OGLASA #{ad['id']} | {ad['search_term']} | {ad['site']}")
 
         try:
-            # Provjeri je li oglasu isteklo vrijeme praćenja
             if ad["expires_at"]:
                 expires = datetime.fromisoformat(ad["expires_at"])
                 if datetime.now() > expires:
                     db.deactivate_ad(ad["id"])
-                    logger.warning(f"⏰ OGLAS ISTEKAO! Deaktiviram i šaljem notifikaciju...")
+                    logger.warning(f"⏰ OGLAS ISTEKAO! Deaktiviram...")
                     try:
                         await context.bot.send_message(
                             chat_id=ad["user_id"],
@@ -523,44 +527,16 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
                             parse_mode="Markdown",
                             reply_markup=MAIN_KEYBOARD,
                         )
-                        logger.info("✅ Notifikacija o isteku poslana!")
                     except Exception as send_err:
                         logger.error(f"❌ Greška pri slanju notifikacije o isteku: {send_err}")
                     continue
 
-            # Pretraga oglasa na sajtu
-            logger.info(f"🔍 Skrapiram '{ad['search_term']}' sa {ad['site']}...")
             results = scraper.scrape_site(ad["site"], ad["search_term"], ad["max_price"])
-            logger.info(f"  ✓ Pronađeno {len(results)} oglasa sa scrapinga")
-
             known_urls = json.loads(ad.get("known_urls") or "[]")
             new_results = [r for r in results if r["url"] not in known_urls]
-            logger.info(f"  ✓ Od toga {len(new_results)} su NOVI (nepoznati)")
 
-            # Logiranje rezultata pretrage
-            max_price_info = f" (max {ad['max_price']:.0f}€)" if ad["max_price"] else ""
-            logger.info(
-                f"📊 REZULTAT: '{ad['search_term']}{max_price_info}' na {ad['site']} — "
-                f"Pronađeno {len(results)} oglasa, {len(new_results)} novih"
-            )
+            logger.info(f" ✓ Pronađeno {len(results)} oglasa, {len(new_results)} novih")
 
-            # Logiranje pojedinih oglasa
-            for i, result in enumerate(results, 1):
-                price = result.get("price")
-                price_str = result.get("price_text", "Cijena nije navedena")
-                is_new = result["url"] not in known_urls
-                is_under_limit = ad["max_price"] is None or price is None or price <= ad["max_price"]
-
-                status = "✅ NOVO" if is_new else "📌 Staro"
-                price_status = "✓ U limitu" if is_under_limit else "✗ Iznad limita"
-
-                logger.info(
-                    f"  {i}. {status} | {result['title'][:50]}... | "
-                    f"{price_str} | {price_status}"
-                )
-
-            # Slanje notifikacija za nove oglase
-            logger.info(f"📨 Slanje {len(new_results)} notifikacija...")
             for result in new_results:
                 price_str = result.get("price_text") or "Cijena nije navedena"
                 total_new_found += 1
@@ -577,30 +553,25 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
                         text=msg,
                         parse_mode="Markdown",
                     )
-                    logger.info(f"  ✅ Notifikacija poslana za: {result['title'][:40]}...")
+                    logger.info(f" ✅ Notifikacija poslana: {result['title'][:40]}...")
                 except Exception as send_err:
-                    logger.error(f"  ❌ Greška pri slanju notifikacije: {send_err}")
+                    logger.error(f" ❌ Greška pri slanju: {send_err}")
 
                 known_urls.append(result["url"])
 
             db.update_ad_known_urls(ad["id"], known_urls)
-            logger.info(f"✅ Ažurirao known_urls ({len(known_urls)} url-ova)")
 
         except Exception as e:
             logger.error(f"❌ Greška pri provjeri oglasa #{ad['id']}: {e}", exc_info=True)
 
     logger.info("=" * 80)
-    logger.info(
-        f"✅ PROVJERA ZAVRŠENA — Provjereno {total_checked} oglasa, "
-        f"pronađeno {total_new_found} novih oglasa."
-    )
+    logger.info(f"✅ ZAVRŠENO — Provjereno {total_checked}, pronađeno {total_new_found} novih")
 
 
-# ─── Main ─────────────────────────────────────────────────────────────────────
+# ─── Main
 
 def main():
     db.init_db()
-
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
@@ -608,7 +579,7 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
-    app.job_queue.run_repeating(check_ads_job, interval=600, first=60)  # 10 minuta za testing
+    app.job_queue.run_repeating(check_ads_job, interval=600, first=60)
 
     logger.info("🚀 PriceBot Srbija pokrenut!")
     app.run_polling()
