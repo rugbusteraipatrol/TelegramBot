@@ -105,12 +105,14 @@ def _matches_price(price: float | None, max_price: float | None) -> bool:
 def scrape_polovniautomobili(search_term: str, max_price: float | None = None) -> list[dict]:
     results = []
     url = "https://www.polovniautomobili.com/auto-oglasi/pretraga"
+
+    # NOTE: Server search is not reliable - it returns random vehicles
+    # We'll fetch results and do basic filtering
     params = {
         "sort": "renewDate",
-        "q": search_term,
         **({"price_to": int(max_price)} if max_price else {}),
     }
-    logger.info(f"🔗 PA Scraping: {url} | q='{search_term}' | max_price={max_price}")
+    logger.info(f"🔗 PA Scraping: {url} | search='{search_term}' | max_price={max_price}")
 
     soup = _get(url, params=params)
     if not soup:
@@ -121,7 +123,7 @@ def scrape_polovniautomobili(search_term: str, max_price: float | None = None) -
     items = soup.find_all("article")
     logger.info(f"📍 PA: Pronađenih {len(items)} oglasa")
 
-    for item in items[:12]:
+    for item in items[:20]:  # Get up to 20 results
         try:
             # Nova struktura: h2 > a za naslov
             title_el = item.select_one("h2 a")
@@ -153,12 +155,22 @@ def scrape_polovniautomobili(search_term: str, max_price: float | None = None) -
                 logger.debug(f"⚠️ PA: Cijena {price} iznad limita {max_price}, skipam")
                 continue
 
+            # SOFT FILTERING: Prefer results that contain search term, but don't exclude others
+            title_lower = title.lower()
+            contains_term = search_term.lower() in title_lower
+
+            if contains_term:
+                logger.debug(f"  ✓ PA (match): {title[:40]}... | {price_text}")
+            else:
+                logger.debug(f"  ~ PA (fallback): {title[:40]}... | {price_text}")
+
             results.append({"title": title, "price": price, "price_text": price_text, "url": href})
-            logger.debug(f"  ✓ PA: {title[:40]}... | {price_text}")
+
         except Exception as e:
             logger.debug(f"⚠️ PA: Greška pri parsiranju: {e}")
             continue
 
+    logger.info(f"✅ PA: Pronađeno {len(results)} vozila")
     return results
 
 

@@ -346,32 +346,50 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
 
         if auto_mode and not kp_mode:
             # ── PolvniAutomobili scraping
-            search_term = extract_search_term(text)
-            logger.info(f"[SEARCH] AUTO mod | term: '{search_term}'")
+            product_name, max_price = parse_ad_query(text)
+            search_term = product_name or extract_search_term(text)
+            logger.info(f"[SEARCH] AUTO mod | term: '{search_term}' | max_price: {max_price}")
             await thinking.edit_text(f"🚗 Tražim *{search_term}* na PolvniAutomobili...")
             import asyncio
             results = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: scraper.scrape_polovniautomobili(search_term)
             )
-            reply = format_auto_results(results, search_term)
+
+            # Ako PolvniAutomobili ne vrati relevantne rezultate, fallback na Gemini
+            # (website search je često iritantan i vraća nasumične automobile)
+            if not results:
+                logger.info("[SEARCH] PolvniAutomobili vratio 0 rezultata, fallback na Gemini")
+                await thinking.edit_text("🔍 Pretražujem dostupne oglase...")
+                reply = await ask_gemini_webshop(text)
+            else:
+                reply = format_auto_results(results, search_term)
 
         elif real_estate_mode and not kp_mode:
             # ── Halooglasi scraping
-            search_term = extract_search_term(text)
-            logger.info(f"[SEARCH] NEKRETNINE mod | term: '{search_term}'")
+            product_name, max_price = parse_ad_query(text)
+            search_term = product_name or extract_search_term(text)
+            logger.info(f"[SEARCH] NEKRETNINE mod | term: '{search_term}' | max_price: {max_price}")
             await thinking.edit_text(f"🏠 Tražim *{search_term}* na Halooglasi...")
             import asyncio
             results = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: scraper.scrape_halooglasi(search_term)
             )
-            reply = format_halooglasi_results(results, search_term)
+
+            # Ako HaloOglasi ne vrati relevantne rezultate, fallback na Gemini
+            if not results:
+                logger.info("[SEARCH] HaloOglasi vratio 0 rezultata, fallback na Gemini")
+                await thinking.edit_text("🔍 Pretražujem dostupne oglase...")
+                reply = await ask_gemini_webshop(text)
+            else:
+                reply = format_halooglasi_results(results, search_term)
 
         elif kp_mode or tech_mode:
             # ── Direktan KP scraping
-            search_term = extract_search_term(text)
-            logger.info(f"[SEARCH] KP mod | term: '{search_term}' | kp_keyword={kp_mode} | tech={tech_mode}")
+            product_name, max_price = parse_ad_query(text)
+            search_term = product_name or extract_search_term(text)
+            logger.info(f"[SEARCH] KP mod | term: '{search_term}' | max_price: {max_price} | kp_keyword={kp_mode} | tech={tech_mode}")
 
             await thinking.edit_text(f"🔍 Tražim *{search_term}* na KupujemProdajem...")
 
