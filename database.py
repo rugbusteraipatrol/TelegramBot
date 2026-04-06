@@ -325,7 +325,15 @@ def get_all_active_ads() -> list[dict]:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("SELECT * FROM tracked_ads WHERE is_active=1")
                 rows = cur.fetchall()
-                return [dict(row) for row in rows]
+                # Ensure known_urls is always a string (JSON)
+                result = []
+                for row in rows:
+                    row_dict = dict(row)
+                    # Convert known_urls to string if it's not already
+                    if row_dict.get("known_urls") and not isinstance(row_dict["known_urls"], str):
+                        row_dict["known_urls"] = json.dumps(row_dict["known_urls"])
+                    result.append(row_dict)
+                return result
         else:
             with conn:
                 rows = conn.execute(

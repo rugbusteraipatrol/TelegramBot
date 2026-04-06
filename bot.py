@@ -671,10 +671,32 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
                     continue
 
             results = scraper.scrape_site(ad["site"], ad["search_term"], ad["max_price"])
-            known_urls = json.loads(ad.get("known_urls") or "[]")
+
+            # CLIENT-SIDE FILTERING: Filter by search term (website search is often unreliable)
+            search_words = [w.lower() for w in ad["search_term"].split() if len(w) > 2]
+            filtered_results = []
+            for r in results:
+                title_lower = r.get("title", "").lower()
+                # At least one significant word from search_term must be in title
+                if any(word in title_lower for word in search_words):
+                    filtered_results.append(r)
+                else:
+                    logger.debug(f"  ⚠️ Filtriran: '{r.get('title', '')}' ne sadrži '{ad['search_term']}'")
+
+            results = filtered_results
+
+            # Load known URLs with proper error handling
+            try:
+                known_urls_str = ad.get("known_urls") or "[]"
+                known_urls = json.loads(known_urls_str)
+                logger.debug(f" 📋 Known URLs: {len(known_urls)} (raw: {known_urls_str[:50]}...)")
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning(f" ⚠️ Greška pri parsiranju known_urls: {e} | Raw: {ad.get('known_urls')}")
+                known_urls = []
+
             new_results = [r for r in results if r["url"] not in known_urls]
 
-            logger.info(f" ✓ Pronađeno {len(results)} oglasa, {len(new_results)} novih")
+            logger.info(f" ✓ Pronađeno {len(results)} oglasa (nakon filtriranja), {len(new_results)} novih")
 
             for result in new_results:
                 price_str = result.get("price_text") or "Cijena nije navedena"
@@ -698,7 +720,13 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
 
                 known_urls.append(result["url"])
 
-            db.update_ad_known_urls(ad["id"], known_urls)
+            # Save updated known URLs to database
+            try:
+                logger.debug(f" 💾 Saving {len(known_urls)} known URLs for ad {ad['id']}")
+                db.update_ad_known_urls(ad["id"], known_urls)
+                logger.info(f" ✅ Known URLs saved: {len(known_urls)} URLs")
+            except Exception as save_err:
+                logger.error(f" ❌ Greška pri čuvanju known_urls: {save_err}", exc_info=True)
 
         except Exception as e:
             logger.error(f"❌ Greška pri provjeri oglasa #{ad['id']}: {e}", exc_info=True)
