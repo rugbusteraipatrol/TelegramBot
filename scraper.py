@@ -241,9 +241,21 @@ def scrape_kupujemprodajem(search_term: str, max_price: float | None = None) -> 
                 logger.debug(f"⚠️ KP: Cijena {price} iznad limita {max_price}, skipam")
                 continue
 
+            # Filtriera dijelove i dodatnu opremu - isključi ako naslov sadrži ključne riječi
+            excluded_keywords = [
+                "case", "maska", "zaštita", "punjač", "kabel", "film", "zaštitni",
+                "dijelovi", "delovi", "dijelove", "akcesori", "oprema", "dodaci",
+                "screen protector", "tempered glass", "adapter", "zamjena", "ekrana",
+                "cover", "silicone", "clear", "wallet", "folio", "flip", "tempered"
+            ]
+            title_lower = title.lower()
+            if any(keyword in title_lower for keyword in excluded_keywords):
+                logger.debug(f"⚠️ KP: '{title}' je dijelovi/oprema, skipam")
+                continue
+
             result = {"title": title, "price": price, "price_text": price_text, "url": href}
             results.append(result)
-            logger.debug(f"  ✓ KP: {title[:40]}... | {price_text} | {href[:50]}...")
+            logger.debug(f"  ✓ KP: {title[:40]}... | {price_text}")
         except Exception as e:
             logger.debug(f"⚠️ KP: Greška pri parsiranju: {e}")
             continue
