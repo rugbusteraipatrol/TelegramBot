@@ -49,6 +49,25 @@ TECH_KEYWORDS = [
     "buds", "earbuds", "watch", "smartwatch", "sat"
 ]
 
+# ─── Auto ključne riječi → PolvniAutomobili
+AUTO_KEYWORDS = [
+    "golf", "passat", "audi", "bmw", "mercedes", "benz", "opel", "ford",
+    "renault", "peugeot", "citroen", "fiat", "toyota", "honda", "mazda",
+    "hyundai", "kia", "skoda", "seat", "volvo", "nissan", "mitsubishi",
+    "suzuki", "dacia", "alfa", "romeo", "jeep", "land rover", "porsche",
+    "volkswagen", "vw", "automobil", "auto prodaja", "godište", "dizel",
+    "benzin", "karavan", "kabriolet", "limuzina", "džip", "suv", "motor",
+    "motocikl", "skuteri", "kombi", "kamion"
+]
+
+# ─── Nekretnine ključne riječi → Halooglasi
+REAL_ESTATE_KEYWORDS = [
+    "stan", "stanovi", "kuća", "kuca", "garsonjera", "apartman", "lokal",
+    "poslovni prostor", "nekretnina", "nekretnine", "iznajmljivanje",
+    "izdavanje", "prodaja stana", "kvadrat", "m2", "soba", "podstanar",
+    "najam", "kirija", "zemlja", "plac", "vikendica", "garaža", "garaza"
+]
+
 SYSTEM_PROMPT_WEBSHOP = """Ti si PriceBot Srbija — asistent za pronalaženje najjeftinijih cijena u NOVIM webshopovima u Srbiji.
 
 VAŽNO: Tražiš SAMO cijene u regularnim webshopovima (Gigatron, Tehnomanija, Shoppster, Ananas, eModa itd.)
@@ -149,6 +168,18 @@ def is_tech_search(text: str) -> bool:
     return any(kw in text_lower for kw in TECH_KEYWORDS)
 
 
+def is_auto_search(text: str) -> bool:
+    """Detektuje da li korisnik traži automobil."""
+    text_lower = text.lower()
+    return any(kw in text_lower for kw in AUTO_KEYWORDS)
+
+
+def is_real_estate_search(text: str) -> bool:
+    """Detektuje da li korisnik traži nekretninu."""
+    text_lower = text.lower()
+    return any(kw in text_lower for kw in REAL_ESTATE_KEYWORDS)
+
+
 def extract_search_term(text: str) -> str:
     """Uklanja KP ključne riječi iz upita da dobijemo čist naziv proizvoda."""
     text_clean = text
@@ -178,6 +209,54 @@ def extract_search_term(text: str) -> str:
     for phrase in remove_phrases:
         text_clean = re.sub(phrase, "", text_clean, flags=re.IGNORECASE).strip()
     return text_clean.strip()
+
+
+def format_auto_results(results: list[dict], search_term: str) -> str:
+    """Formatuje PolvniAutomobili rezultate."""
+    if not results:
+        pa_url = f"https://www.polovniautomobili.com/auto-oglasi/pretraga?q={search_term.replace(' ', '+')}"
+        return (
+            f"❌ Nisam pronašao oglase za *{search_term}* na PolvniAutomobili.\n\n"
+            f"🔗 Pretražite ručno: [PolvniAutomobili]({pa_url})"
+        )
+    lines = [f"🚗 *Rezultati za: {search_term}* (PolvniAutomobili)\n"]
+    for i, r in enumerate(results[:5], 1):
+        title = r.get("title", "Nepoznat naziv")[:60]
+        price_text = r.get("price_text", "Cijena nije navedena")
+        url = r.get("url", "")
+        if url and not url.startswith("http"):
+            url = "https://www.polovniautomobili.com" + url
+        if url:
+            lines.append(f"{i}. 🚗 [{title}]({url})\n   💰 {price_text}")
+        else:
+            lines.append(f"{i}. 🚗 {title}\n   💰 {price_text}")
+    pa_url = f"https://www.polovniautomobili.com/auto-oglasi/pretraga?q={search_term.replace(' ', '+')}"
+    lines.append(f"\n🔍 [Prikaži sve oglase na PolvniAutomobili]({pa_url})")
+    return "\n".join(lines)
+
+
+def format_halooglasi_results(results: list[dict], search_term: str) -> str:
+    """Formatuje Halooglasi rezultate."""
+    if not results:
+        ha_url = f"https://www.halooglasi.com/pretraga?what={search_term.replace(' ', '+')}"
+        return (
+            f"❌ Nisam pronašao oglase za *{search_term}* na Halooglasi.\n\n"
+            f"🔗 Pretražite ručno: [Halooglasi]({ha_url})"
+        )
+    lines = [f"🏠 *Rezultati za: {search_term}* (Halooglasi)\n"]
+    for i, r in enumerate(results[:5], 1):
+        title = r.get("title", "Nepoznat naziv")[:60]
+        price_text = r.get("price_text", "Cijena nije navedena")
+        url = r.get("url", "")
+        if url and not url.startswith("http"):
+            url = "https://www.halooglasi.com" + url
+        if url:
+            lines.append(f"{i}. 🏠 [{title}]({url})\n   💰 {price_text}")
+        else:
+            lines.append(f"{i}. 🏠 {title}\n   💰 {price_text}")
+    ha_url = f"https://www.halooglasi.com/pretraga?what={search_term.replace(' ', '+')}"
+    lines.append(f"\n🔍 [Prikaži sve oglase na Halooglasi]({ha_url})")
+    return "\n".join(lines)
 
 
 def format_kp_results(results: list[dict], search_term: str) -> str:
@@ -262,8 +341,34 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
 
         kp_mode = is_kp_search(text)
         tech_mode = is_tech_search(text)
+        auto_mode = is_auto_search(text)
+        real_estate_mode = is_real_estate_search(text)
 
-        if kp_mode or tech_mode:
+        if auto_mode and not kp_mode:
+            # ── PolvniAutomobili scraping
+            search_term = extract_search_term(text)
+            logger.info(f"[SEARCH] AUTO mod | term: '{search_term}'")
+            await thinking.edit_text(f"🚗 Tražim *{search_term}* na PolvniAutomobili...")
+            import asyncio
+            results = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: scraper.scrape_polovniautomobili(search_term)
+            )
+            reply = format_auto_results(results, search_term)
+
+        elif real_estate_mode and not kp_mode:
+            # ── Halooglasi scraping
+            search_term = extract_search_term(text)
+            logger.info(f"[SEARCH] NEKRETNINE mod | term: '{search_term}'")
+            await thinking.edit_text(f"🏠 Tražim *{search_term}* na Halooglasi...")
+            import asyncio
+            results = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: scraper.scrape_halooglasi(search_term)
+            )
+            reply = format_halooglasi_results(results, search_term)
+
+        elif kp_mode or tech_mode:
             # ── Direktan KP scraping
             search_term = extract_search_term(text)
             logger.info(f"[SEARCH] KP mod | term: '{search_term}' | kp_keyword={kp_mode} | tech={tech_mode}")
