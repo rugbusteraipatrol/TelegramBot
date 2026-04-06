@@ -167,7 +167,8 @@ def scrape_kupujemprodajem(search_term: str, max_price: float | None = None) -> 
     url = "https://www.kupujemprodajem.com/pretraga"
 
     # Za mobilne telefone: postavi minimum cijenu (izbegni dijelove i dodatnu opremu)
-    min_price = 150 if "iphone" in search_term.lower() or "telefon" in search_term.lower() else 10
+    # 80€ je dovoljno da filtrira dijelove (20-40€) a da uključi rabljene telefone (50-100€)
+    min_price = 80 if "iphone" in search_term.lower() or "telefon" in search_term.lower() or "samsung" in search_term.lower() or "galaxy" in search_term.lower() else 10
 
     params = {
         "keywords": search_term,
