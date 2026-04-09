@@ -159,25 +159,45 @@ def parse_ad_query(text: str) -> tuple[str, float | None]:
 def is_kp_search(text: str) -> bool:
     """Detektuje da li korisnik traži oglase na KupujemProdajem."""
     text_lower = text.lower()
-    return any(kw in text_lower for kw in KP_KEYWORDS)
+    # Use word boundaries for longer keywords, substring for short ones
+    for kw in KP_KEYWORDS:
+        if len(kw) > 3:
+            if re.search(rf'\b{re.escape(kw)}\b', text_lower):
+                return True
+        else:
+            if kw in text_lower:
+                return True
+    return False
 
 
 def is_tech_search(text: str) -> bool:
     """Detektuje da li korisnik traži tehničke proizvode."""
     text_lower = text.lower()
-    return any(kw in text_lower for kw in TECH_KEYWORDS)
+    # Use word boundaries for all keywords
+    for kw in TECH_KEYWORDS:
+        if re.search(rf'\b{re.escape(kw)}\b', text_lower):
+            return True
+    return False
 
 
 def is_auto_search(text: str) -> bool:
     """Detektuje da li korisnik traži automobil."""
     text_lower = text.lower()
-    return any(kw in text_lower for kw in AUTO_KEYWORDS)
+    # Use word boundaries for all keywords to avoid "Motorola" matching "motor"
+    for kw in AUTO_KEYWORDS:
+        if re.search(rf'\b{re.escape(kw)}\b', text_lower):
+            return True
+    return False
 
 
 def is_real_estate_search(text: str) -> bool:
     """Detektuje da li korisnik traži nekretninu."""
     text_lower = text.lower()
-    return any(kw in text_lower for kw in REAL_ESTATE_KEYWORDS)
+    # Use word boundaries for all keywords
+    for kw in REAL_ESTATE_KEYWORDS:
+        if re.search(rf'\b{re.escape(kw)}\b', text_lower):
+            return True
+    return False
 
 
 def extract_search_term(text: str) -> str:
