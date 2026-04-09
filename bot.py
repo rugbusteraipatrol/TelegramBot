@@ -291,8 +291,8 @@ def format_kp_results(results: list[dict], search_term: str) -> str:
     return "\n".join(lines)
 
 
-async def ask_gemini_webshop(user_message: str) -> str:
-    """Šalje upit Gemini-u za webshop cijene (Gigatron, Tehnomanija itd.)"""
+async def ask_gemini_webshop(user_message: str, retry_count: int = 0, max_retries: int = 2) -> str:
+    """Šalje upit Gemini-u za webshop cijene (Gigatron, Tehnomanija itd.) sa retry logikom."""
     if not GOOGLE_API_KEY:
         logger.error("❌ GOOGLE_API_KEY nije postavljen!")
         return "❌ Greška u konfiguraciji: GOOGLE_API_KEY nije pronađen.\n\nKontaktiraj admina."
@@ -307,7 +307,7 @@ async def ask_gemini_webshop(user_message: str) -> str:
             "tools": [{"googleSearch": {}}]
         }
 
-        logger.debug(f"[GEMINI] Slanje zahtjeva na {GEMINI_API_URL}")
+        logger.debug(f"[GEMINI] Slanje zahtjeva na {GEMINI_API_URL} (attempt {retry_count + 1}/{max_retries + 1})")
         async with httpx.AsyncClient() as httpx_client:
             response = await httpx_client.post(
                 f"{GEMINI_API_URL}?key={GOOGLE_API_KEY}",
@@ -319,12 +319,30 @@ async def ask_gemini_webshop(user_message: str) -> str:
             if response.status_code == 401:
                 logger.error(f"❌ GEMINI 401: Nevaljani API ključ")
                 return "❌ Greška: Nevaljani Google API ključ. Kontaktiraj admina."
+
             elif response.status_code == 429:
-                logger.error(f"❌ GEMINI 429: Rate limit")
+                logger.error(f"❌ GEMINI 429: Rate limit (attempt {retry_count + 1})")
+                if retry_count < max_retries:
+                    import asyncio
+                    await asyncio.sleep(2 ** retry_count)  # exponential backoff: 1s, 2s, 4s
+                    return await ask_gemini_webshop(user_message, retry_count + 1, max_retries)
                 return "⚠️ Previše zahteva. Pokušaj ponovo za nekoliko sekundi."
-            elif response.status_code == 500:
-                logger.error(f"❌ GEMINI 500: Server error")
-                return "⚠️ Google Gemini server je privremeno nedostupan. Pokušaj ponovo."
+
+            elif response.status_code == 503:
+                logger.error(f"❌ GEMINI 503: Service Unavailable (attempt {retry_count + 1})")
+                if retry_count < max_retries:
+                    import asyncio
+                    await asyncio.sleep(2 ** retry_count)  # exponential backoff
+                    return await ask_gemini_webshop(user_message, retry_count + 1, max_retries)
+                return "⚠️ Google Gemini servis je trenutno nedostupan. Pokušaj ponovo za nekoliko minuta."
+
+            elif response.status_code in [500, 502, 504]:
+                logger.error(f"❌ GEMINI {response.status_code}: Server error (attempt {retry_count + 1})")
+                if retry_count < max_retries:
+                    import asyncio
+                    await asyncio.sleep(2 ** retry_count)
+                    return await ask_gemini_webshop(user_message, retry_count + 1, max_retries)
+                return f"⚠️ Google server greška ({response.status_code}). Pokušaj ponovo."
 
             response.raise_for_status()
             data = response.json()
@@ -341,11 +359,17 @@ async def ask_gemini_webshop(user_message: str) -> str:
         return "Nisam pronašao rezultate."
 
     except httpx.TimeoutException:
-        logger.error(f"❌ GEMINI Timeout (30s)")
+        logger.error(f"❌ GEMINI Timeout (30s) - attempt {retry_count + 1}")
+        if retry_count < max_retries:
+            import asyncio
+            await asyncio.sleep(2 ** retry_count)
+            return await ask_gemini_webshop(user_message, retry_count + 1, max_retries)
         return "⚠️ Zahtjev je trajao previše dugo. Pokušaj ponovo."
+
     except httpx.HTTPError as e:
         logger.error(f"❌ GEMINI HTTP error: {e}")
-        return f"⚠️ Mrežna greška: {str(e)[:80]}"
+        return f"⚠️ Mrežna greška: {str(e)[:100]}"
+
     except Exception as e:
         logger.error(f"❌ GEMINI Nepoznata greška: {type(e).__name__}: {e}", exc_info=True)
         return f"❌ Greška pri pretrazi: {str(e)[:80]}"
