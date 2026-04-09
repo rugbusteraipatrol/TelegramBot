@@ -293,6 +293,10 @@ def format_kp_results(results: list[dict], search_term: str) -> str:
 
 async def ask_gemini_webshop(user_message: str) -> str:
     """Šalje upit Gemini-u za webshop cijene (Gigatron, Tehnomanija itd.)"""
+    if not GOOGLE_API_KEY:
+        logger.error("❌ GOOGLE_API_KEY nije postavljen!")
+        return "❌ Greška u konfiguraciji: GOOGLE_API_KEY nije pronađen.\n\nKontaktiraj admina."
+
     try:
         payload = {
             "contents": [{
@@ -303,12 +307,25 @@ async def ask_gemini_webshop(user_message: str) -> str:
             "tools": [{"googleSearch": {}}]
         }
 
+        logger.debug(f"[GEMINI] Slanje zahtjeva na {GEMINI_API_URL}")
         async with httpx.AsyncClient() as httpx_client:
             response = await httpx_client.post(
                 f"{GEMINI_API_URL}?key={GOOGLE_API_KEY}",
                 json=payload,
                 timeout=30.0
             )
+
+            # Detaljniji error logging
+            if response.status_code == 401:
+                logger.error(f"❌ GEMINI 401: Nevaljani API ključ")
+                return "❌ Greška: Nevaljani Google API ključ. Kontaktiraj admina."
+            elif response.status_code == 429:
+                logger.error(f"❌ GEMINI 429: Rate limit")
+                return "⚠️ Previše zahteva. Pokušaj ponovo za nekoliko sekundi."
+            elif response.status_code == 500:
+                logger.error(f"❌ GEMINI 500: Server error")
+                return "⚠️ Google Gemini server je privremeno nedostupan. Pokušaj ponovo."
+
             response.raise_for_status()
             data = response.json()
 
@@ -316,13 +333,22 @@ async def ask_gemini_webshop(user_message: str) -> str:
             content = data["candidates"][0].get("content", {})
             parts = content.get("parts", [])
             texts = [p.get("text", "") for p in parts if "text" in p]
-            return "\n".join(texts) or "Nisam pronašao rezultate."
+            result = "\n".join(texts) or "Nisam pronašao rezultate."
+            logger.info(f"[GEMINI] ✅ Pronađeni rezultati ({len(texts)} dijelova)")
+            return result
 
+        logger.warning(f"[GEMINI] Nema candidates u odgovoru: {data}")
         return "Nisam pronašao rezultate."
 
+    except httpx.TimeoutException:
+        logger.error(f"❌ GEMINI Timeout (30s)")
+        return "⚠️ Zahtjev je trajao previše dugo. Pokušaj ponovo."
+    except httpx.HTTPError as e:
+        logger.error(f"❌ GEMINI HTTP error: {e}")
+        return f"⚠️ Mrežna greška: {str(e)[:80]}"
     except Exception as e:
-        logger.error(f"Greška pri Gemini pretrazi: {e}")
-        raise
+        logger.error(f"❌ GEMINI Nepoznata greška: {type(e).__name__}: {e}", exc_info=True)
+        return f"❌ Greška pri pretrazi: {str(e)[:80]}"
 
 
 async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
@@ -673,15 +699,38 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
             results = scraper.scrape_site(ad["site"], ad["search_term"], ad["max_price"])
 
             # CLIENT-SIDE FILTERING: Filter by search term (website search is often unreliable)
+            search_term_lower = ad["search_term"].lower()
             search_words = [w.lower() for w in ad["search_term"].split() if len(w) > 2]
             filtered_results = []
+
             for r in results:
                 title_lower = r.get("title", "").lower()
-                # At least one significant word from search_term must be in title
-                if any(word in title_lower for word in search_words):
-                    filtered_results.append(r)
-                else:
-                    logger.debug(f"  ⚠️ Filtriran: '{r.get('title', '')}' ne sadrži '{ad['search_term']}'")
+
+                # Strategy 1: Check if ANY significant word matches
+                word_match = any(word in title_lower for word in search_words)
+                if not word_match:
+                    logger.debug(f"  ⚠️ Filtriran (no words): '{r.get('title', '')}'")
+                    continue
+
+                # Strategy 2: If search term contains number (e.g., "Golf 5"), check for exact match
+                # Don't match "Golf 5" with "Golf 4", "Golf 6", "Golf 45", etc.
+                import re
+                numbers_in_search = re.findall(r'\d+', search_term_lower)
+                if numbers_in_search:
+                    # For each number in search term, check if it appears in title
+                    all_numbers_found = True
+                    for num in numbers_in_search:
+                        # Check for isolated number: "Golf 5" should match "Golf 5" but not "Golf 45"
+                        if not re.search(rf'\b{num}\b', title_lower):
+                            logger.debug(f"  ⚠️ Filtriran (version): '{r.get('title', '')}' nema '{num}'")
+                            all_numbers_found = False
+                            break
+
+                    if not all_numbers_found:
+                        continue
+
+                # All checks passed
+                filtered_results.append(r)
 
             results = filtered_results
 
