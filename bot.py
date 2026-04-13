@@ -76,10 +76,12 @@ NE tražiš oglase na KupujemProdajem — to je zasebna funkcija.
 FORMAT ODGOVORA - STROGO SLIJEDI (svaki rezultat u novom redu):
 🏪 Naziv proizvoda • Cijena: XXX RSD • https://direktan-link-na-sajt.rs
 
-PRAVILA:
-- Prikaži SAMO 3-5 najjeftinijih opcija
-- Sortiraj od najjeftinije ka najskupljoj  
-- Samo direktni linkovi na produktne stranice ili pretragu
+KRITIČNA PRAVILA:
+- NIKADA ne haluciniraj linkove ili cijene - koristi SAMO stvarne rezultate iz web search-a
+- Prikaži SAMO proizvode koje si stvarno pronašao (sa cijenama i linkovima)
+- Ako nemaš dovoljno rezultata, reci "Nisam pronašao dovoljno rezultata" umjesto da izmišljaš
+- Samo direktni linkovi na stranice koje su u search rezultatima
+- Sortiraj od najjeftinije ka najskupljoj
 - Odgovori na srpskom jeziku
 - Bez dodatnog teksta, samo lista rezultata"""
 
@@ -467,7 +469,7 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
             import asyncio
             results = await asyncio.get_event_loop().run_in_executor(
                 None,
-                lambda: scraper.scrape_kupujemprodajem(search_term)
+                lambda: scraper.scrape_kupujemprodajem(search_term, max_price)
             )
 
             reply = format_kp_results(results, search_term)
