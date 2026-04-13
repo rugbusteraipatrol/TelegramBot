@@ -322,18 +322,160 @@ def scrape_halooglasi(search_term: str, max_price: float | None = None) -> list[
     return results
 
 
+# ─── Webshop Scrapers ─────────────────────────────────────────────────────────
+
+def scrape_gigatron(search_term: str, max_price: float | None = None) -> list[dict]:
+    """Gigatron je Next.js SPA — server-side scraping nije moguć.
+    Vraća praznu listu, format funkcija dodaje direktan link."""
+    logger.info(f"[GIGATRON] SPA sajt — nije moguće scrapovati, vraćam []")
+    return []
+
+
+def _scrape_magento(base_url: str, site_name: str,
+                    search_term: str, max_price: float | None) -> list[dict]:
+    """Genericni scraper za Magento sajtove (Tehnomanija, WinWin)."""
+    results = []
+    url = f"{base_url}/catalogsearch/result/"
+    params = {"q": search_term}
+
+    logger.info(f"[{site_name.upper()}] Scraping: '{search_term}'")
+
+    # Session sa cookie-jem: simulira browsing da zaobiđe 403
+    session = requests.Session()
+    try:
+        session.get(base_url, headers=get_headers(), timeout=10)
+        time.sleep(random.uniform(1.0, 2.0))
+    except Exception:
+        pass
+
+    try:
+        resp = session.get(url, params=params, headers={
+            **get_headers(),
+            "Referer": base_url + "/",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }, timeout=TIMEOUT)
+
+        if resp.status_code == 403:
+            logger.warning(f"[{site_name.upper()}] 403 Forbidden — bot detekcija aktivna")
+            return results
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+    except Exception as e:
+        logger.error(f"[{site_name.upper()}] Greška pri dohvatanju: {e}")
+        return results
+
+    # Magento standardni selektori
+    items = soup.select("li.product-item, div.product-item, .product-item-info")
+    if not items:
+        # Fallback: svaki article ili div sa linkom na proizvod
+        items = soup.find_all("article") or soup.select("div.item.product")
+
+    logger.info(f"[{site_name.upper()}] Pronađeno {len(items)} item-a")
+
+    for item in items[:12]:
+        try:
+            title_el = item.select_one("a.product-item-link, .product-item-name a, h2 a, h3 a")
+            if not title_el:
+                continue
+
+            title = title_el.get_text(strip=True)
+            href = title_el.get("href", "")
+            if href and not href.startswith("http"):
+                href = base_url + href
+
+            # Cijena: posebna, regularna, ili generički span.price
+            price_el = item.select_one(
+                ".special-price .price, .regular-price .price, "
+                "span.price, .price-wrapper .price"
+            )
+            price_text = price_el.get_text(strip=True) if price_el else ""
+            price = _parse_price(price_text)
+
+            if not _matches_price(price, max_price):
+                continue
+
+            results.append({
+                "title": title,
+                "price": price,
+                "price_text": price_text or "Cijena na sajtu",
+                "url": href,
+                "source": site_name,
+            })
+        except Exception as e:
+            logger.debug(f"[{site_name.upper()}] Parse error: {e}")
+
+    logger.info(f"[{site_name.upper()}] Pronađeno {len(results)} rezultata")
+    return results
+
+
+def scrape_tehnomanija(search_term: str, max_price: float | None = None) -> list[dict]:
+    return _scrape_magento("https://www.tehnomanija.rs", "Tehnomanija", search_term, max_price)
+
+
+def scrape_winwin(search_term: str, max_price: float | None = None) -> list[dict]:
+    return _scrape_magento("https://www.winwin.rs", "WinWin", search_term, max_price)
+
+
+def scrape_webshops(search_term: str, max_price: float | None = None) -> list[dict]:
+    """
+    Paralelno scrapa Tehnomanija i WinWin (Gigatron je SPA — nije scrappable).
+    Vraća stvarne rezultate sortirane po cijeni — nikad halucinacije.
+    Ako sajt ne odgovori, loguje grešku i nastavlja sa ostalima.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    scrapers = [
+        ("Tehnomanija", scrape_tehnomanija),
+        ("WinWin", scrape_winwin),
+    ]
+
+    all_results = []
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(fn, search_term, max_price): name
+            for name, fn in scrapers
+        }
+        for future in as_completed(futures, timeout=30):
+            name = futures[future]
+            try:
+                results = future.result()
+                logger.info(f"[WEBSHOP] {name}: {len(results)} rezultata")
+                all_results.extend(results)
+            except Exception as e:
+                logger.error(f"[WEBSHOP] {name} greška — preskačem: {e}")
+
+    # Ukloni duplikate po URL-u
+    seen_urls = set()
+    unique_results = []
+    for r in all_results:
+        url = r.get("url", "")
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            unique_results.append(r)
+        elif not url:
+            unique_results.append(r)
+
+    # Sortiraj po cijeni (None na kraj)
+    unique_results.sort(key=lambda r: (r["price"] is None, r["price"] or 0))
+    return unique_results
+
+
 # ─── Dispatcher ───────────────────────────────────────────────────────────────
 
 _SCRAPERS = {
     "polovniautomobili.com": scrape_polovniautomobili,
     "kupujemprodajem.com": scrape_kupujemprodajem,
     "halooglasi.com": scrape_halooglasi,
+    "gigatron.rs": scrape_gigatron,
+    "tehnomanija.rs": scrape_tehnomanija,
+    "winwin.rs": scrape_winwin,
 }
 
 
 def scrape_site(site: str, search_term: str, max_price: float | None = None) -> list[dict]:
-    scraper = _SCRAPERS.get(site)
-    if scraper:
-        return scraper(search_term, max_price)
+    fn = _SCRAPERS.get(site)
+    if fn:
+        return fn(search_term, max_price)
     logger.warning(f"Nema scrapera za sajt: {site}")
     return []

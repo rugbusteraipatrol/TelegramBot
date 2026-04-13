@@ -313,6 +313,48 @@ def format_kp_results(results: list[dict], search_term: str) -> str:
     return "\n".join(lines)
 
 
+def format_webshop_results(results: list[dict], search_term: str) -> str:
+    """Formatuje agregirane webshop rezultate sortirane po cijeni."""
+    q = search_term.replace(' ', '+')
+
+    if not results:
+        return (
+            f"❌ Nisam pronašao *{search_term}* u webshopovima.\n\n"
+            f"Pretražite ručno:\n"
+            f"• [Gigatron](https://www.gigatron.rs/pretraga?q={q})\n"
+            f"• [Tehnomanija](https://www.tehnomanija.rs/catalogsearch/result/?q={q})\n"
+            f"• [WinWin](https://www.winwin.rs/catalogsearch/result/?q={q})"
+        )
+
+    lines = [f"🏪 *Webshop cijene za: {search_term}*\n"]
+    source_emoji = {"Gigatron": "🔵", "Tehnomanija": "🟠", "WinWin": "🟢"}
+
+    seen_sources = set()
+    for i, r in enumerate(results[:6], 1):
+        title = r.get("title", "")[:55]
+        price_text = r.get("price_text", "N/A")
+        url = r.get("url", "")
+        source = r.get("source", "")
+        emoji = source_emoji.get(source, "🏪")
+        seen_sources.add(source)
+
+        if url:
+            lines.append(f"{i}. {emoji} [{title}]({url})\n   💰 {price_text} — _{source}_")
+        else:
+            lines.append(f"{i}. {emoji} {title}\n   💰 {price_text} — _{source}_")
+
+    # Gigatron je SPA — uvijek daj link za ručnu pretragu
+    manual = [f"[Gigatron](https://www.gigatron.rs/pretraga?q={q})"]
+    # Dodaj linkove za scrappable sajtove koji nisu dali rezultate
+    if "Tehnomanija" not in seen_sources:
+        manual.append(f"[Tehnomanija](https://www.tehnomanija.rs/catalogsearch/result/?q={q})")
+    if "WinWin" not in seen_sources:
+        manual.append(f"[WinWin](https://www.winwin.rs/catalogsearch/result/?q={q})")
+    lines.append(f"\n🔍 Ručna pretraga: {' • '.join(manual)}")
+
+    return "\n".join(lines)
+
+
 async def ask_gemini_webshop(user_message: str, retry_count: int = 0, max_retries: int = 2) -> str:
     """Šalje upit Gemini-u za webshop cijene (Gigatron, Tehnomanija itd.) sa retry logikom."""
     if not GOOGLE_API_KEY:
@@ -474,16 +516,30 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
 
             reply = format_kp_results(results, search_term)
 
-            # Ako KP ne vrati ništa i nije eksplicitno tražen KP, pokušaj Gemini kao fallback
+            # Ako KP ne vrati ništa, pokušaj direktne webshopove
             if not results and not kp_mode:
-                logger.info("[SEARCH] KP vratio 0 rezultata, fallback na Gemini")
-                await thinking.edit_text("🔍 Pretražujem webshopove...")
-                reply = await ask_gemini_webshop(text)
+                logger.info("[SEARCH] KP vratio 0 rezultata, fallback na webshop scrapers")
+                await thinking.edit_text(f"🏪 Pretražujem webshopove za *{search_term}*...")
+                import asyncio
+                results = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: scraper.scrape_webshops(search_term, max_price)
+                )
+                reply = format_webshop_results(results, search_term)
 
         else:
-            # ── Gemini webshop pretraga
-            logger.info(f"[SEARCH] Gemini webshop mod za: '{text}'")
-            reply = await ask_gemini_webshop(text)
+            # ── Direktni webshop scrapers (Gigatron, Tehnomanija, WinWin)
+            product_name, max_price = parse_ad_query(text)
+            search_term = extract_search_term(product_name or text)
+            logger.info(f"[SEARCH] WEBSHOP mod | term: '{search_term}' | max_price: {max_price}")
+
+            await thinking.edit_text(f"🏪 Pretražujem webshopove za *{search_term}*...")
+            import asyncio
+            results = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: scraper.scrape_webshops(search_term, max_price)
+            )
+            reply = format_webshop_results(results, search_term)
 
     except Exception as e:
         logger.error(f"[SEARCH] EXCEPTION: {type(e).__name__}: {e}", exc_info=True)
