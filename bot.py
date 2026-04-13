@@ -419,7 +419,7 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
         if auto_mode and not kp_mode:
             # ── PolvniAutomobili scraping
             product_name, max_price = parse_ad_query(text)
-            search_term = product_name or extract_search_term(text)
+            search_term = extract_search_term(product_name or text)
             logger.info(f"[SEARCH] AUTO mod | term: '{search_term}' | max_price: {max_price}")
             await thinking.edit_text(f"🚗 Tražim *{search_term}* na PolvniAutomobili...")
             import asyncio
@@ -440,7 +440,7 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
         elif real_estate_mode and not kp_mode:
             # ── Halooglasi scraping
             product_name, max_price = parse_ad_query(text)
-            search_term = product_name or extract_search_term(text)
+            search_term = extract_search_term(product_name or text)
             logger.info(f"[SEARCH] NEKRETNINE mod | term: '{search_term}' | max_price: {max_price}")
             await thinking.edit_text(f"🏠 Tražim *{search_term}* na Halooglasi...")
             import asyncio
@@ -460,7 +460,7 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
         elif kp_mode or tech_mode:
             # ── Direktan KP scraping
             product_name, max_price = parse_ad_query(text)
-            search_term = product_name or extract_search_term(text)
+            search_term = extract_search_term(product_name or text)
             logger.info(f"[SEARCH] KP mod | term: '{search_term}' | max_price: {max_price} | kp_keyword={kp_mode} | tech={tech_mode}")
 
             await thinking.edit_text(f"🔍 Tražim *{search_term}* na KupujemProdajem...")
