@@ -445,10 +445,27 @@ def scrape_webshops(search_term: str, max_price: float | None = None) -> list[di
             except Exception as e:
                 logger.error(f"[WEBSHOP] {name} greška — preskačem: {e}")
 
+    # Filtriraj po search termu — svaka značajna riječ mora biti u naslovu
+    # Npr. "Motorola Buds" → naslov mora sadržati I "motorola" I "buds"
+    search_words = [w.lower() for w in search_term.split() if len(w) > 2]
+    filtered = []
+    for r in all_results:
+        title_lower = r.get("title", "").lower()
+        if all(word in title_lower for word in search_words):
+            filtered.append(r)
+        else:
+            logger.debug(f"[WEBSHOP] Filtriran: '{r['title'][:40]}' ne sadrži sve pojmove iz '{search_term}'")
+
+    if not filtered and all_results:
+        # Ako ništa ne prođe strogi filter, pokušaj sa prvom riječju (brand)
+        first_word = search_words[0] if search_words else ""
+        filtered = [r for r in all_results if first_word in r.get("title", "").lower()]
+        logger.info(f"[WEBSHOP] Strogi filter dao 0, fallback na brand '{first_word}': {len(filtered)} rezultata")
+
     # Ukloni duplikate po URL-u
     seen_urls = set()
     unique_results = []
-    for r in all_results:
+    for r in filtered:
         url = r.get("url", "")
         if url and url not in seen_urls:
             seen_urls.add(url)
@@ -458,6 +475,7 @@ def scrape_webshops(search_term: str, max_price: float | None = None) -> list[di
 
     # Sortiraj po cijeni (None na kraj)
     unique_results.sort(key=lambda r: (r["price"] is None, r["price"] or 0))
+    logger.info(f"[WEBSHOP] Ukupno: {len(unique_results)} relevantnih rezultata za '{search_term}'")
     return unique_results
 
 
