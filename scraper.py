@@ -394,6 +394,12 @@ def _scrape_magento(base_url: str, site_name: str,
             if not _matches_price(price, max_price):
                 continue
 
+            # FIX #1: Strogi brand filter — prva riječ upita MORA biti u naslovu
+            brand = search_term.split()[0].lower() if search_term else ""
+            if brand and brand not in title.lower():
+                logger.debug(f"[{site_name.upper()}] Brand filter: '{title[:40]}' nema '{brand}'")
+                continue
+
             results.append({
                 "title": title,
                 "price": price,
@@ -404,7 +410,7 @@ def _scrape_magento(base_url: str, site_name: str,
         except Exception as e:
             logger.debug(f"[{site_name.upper()}] Parse error: {e}")
 
-    logger.info(f"[{site_name.upper()}] Pronađeno {len(results)} rezultata")
+    logger.info(f"[{site_name.upper()}] Pronađeno {len(results)} rezultata (brand='{search_term.split()[0] if search_term else ''}')")
     return results
 
 
@@ -445,22 +451,26 @@ def scrape_webshops(search_term: str, max_price: float | None = None) -> list[di
             except Exception as e:
                 logger.error(f"[WEBSHOP] {name} greška — preskačem: {e}")
 
-    # Filtriraj po search termu — svaka značajna riječ mora biti u naslovu
-    # Npr. "Motorola Buds" → naslov mora sadržati I "motorola" I "buds"
-    search_words = [w.lower() for w in search_term.split() if len(w) > 2]
+    # FIX #2: Filtriraj samo po brand-u (1. riječ) + modelu (2. riječ ako postoji)
+    # "Motorola Buds+ Sound by Bose" → filter traži "motorola" I "buds" u naslovu
+    # Ignoriše sekundarne pojmove: "Sound", "by", "Bose"
+    words = [w.lower() for w in search_term.split() if len(w) > 2]
+    key_words = words[:2]  # Samo brand + model, max 2 pojma
+    logger.info(f"[WEBSHOP] Filter ključnih pojmova: {key_words}")
+
     filtered = []
     for r in all_results:
         title_lower = r.get("title", "").lower()
-        if all(word in title_lower for word in search_words):
+        if all(w in title_lower for w in key_words):
             filtered.append(r)
         else:
-            logger.debug(f"[WEBSHOP] Filtriran: '{r['title'][:40]}' ne sadrži sve pojmove iz '{search_term}'")
+            logger.debug(f"[WEBSHOP] Filtriran: '{r['title'][:40]}' nema {key_words}")
 
     if not filtered and all_results:
-        # Ako ništa ne prođe strogi filter, pokušaj sa prvom riječju (brand)
-        first_word = search_words[0] if search_words else ""
-        filtered = [r for r in all_results if first_word in r.get("title", "").lower()]
-        logger.info(f"[WEBSHOP] Strogi filter dao 0, fallback na brand '{first_word}': {len(filtered)} rezultata")
+        # Fallback: samo brand (prva riječ)
+        brand = key_words[0] if key_words else ""
+        filtered = [r for r in all_results if brand in r.get("title", "").lower()]
+        logger.info(f"[WEBSHOP] Brand+model filter dao 0, fallback na samo brand '{brand}': {len(filtered)} rezultata")
 
     # Ukloni duplikate po URL-u
     seen_urls = set()
