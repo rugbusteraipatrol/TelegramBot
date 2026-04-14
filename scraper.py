@@ -424,14 +424,13 @@ def scrape_winwin(search_term: str, max_price: float | None = None) -> list[dict
 
 def scrape_webshops(search_term: str, max_price: float | None = None) -> list[dict]:
     """
-    Paralelno scrapa Tehnomanija i WinWin (Gigatron je SPA — nije scrappable).
+    Scrapa WinWin webshop (Gigatron/Eponuda su SPA/403 — nisu scrappable).
     Vraća stvarne rezultate sortirane po cijeni — nikad halucinacije.
-    Ako sajt ne odgovori, loguje grešku i nastavlja sa ostalima.
+    Eponuda.rs i Gigatron.rs se prikazuju kao ručni linkovi u formatu odgovora.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     scrapers = [
-        ("Tehnomanija", scrape_tehnomanija),
         ("WinWin", scrape_winwin),
     ]
 

@@ -313,45 +313,89 @@ def format_kp_results(results: list[dict], search_term: str) -> str:
     return "\n".join(lines)
 
 
+def format_combined_results(webshop_results: list[dict], kp_results: list[dict], search_term: str) -> str:
+    """
+    Formatuje rezultate u dva dijela:
+      🏪 Webshop cijene (WinWin + manual linkovi za Eponuda/Gigatron)
+      🔄 Polovni oglasi (KupujemProdajem)
+    """
+    q = search_term.replace(' ', '+')
+    lines = []
+
+    # ── Sekcija 1: Webshop cijene
+    lines.append(f"🏪 *Webshop cijene za: {search_term}*\n")
+    if webshop_results:
+        for i, r in enumerate(webshop_results[:5], 1):
+            title = r.get("title", "")[:55]
+            price_text = r.get("price_text", "N/A")
+            url = r.get("url", "")
+            source = r.get("source", "")
+            if url:
+                lines.append(f"{i}. 🟢 [{title}]({url})\n   💰 {price_text} — _{source}_")
+            else:
+                lines.append(f"{i}. 🟢 {title}\n   💰 {price_text} — _{source}_")
+    else:
+        lines.append("_Nije pronađeno u webshopovima._")
+
+    # Ručni linkovi: Eponuda (glavni) i Gigatron
+    lines.append(
+        f"\n🔍 Pretraži i na: "
+        f"[Eponuda](https://www.eponuda.com/search/?q={q}) • "
+        f"[Gigatron](https://www.gigatron.rs/pretraga?q={q})"
+    )
+
+    # ── Sekcija 2: Polovni oglasi (KP)
+    lines.append(f"\n━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"🔄 *Polovni oglasi (KupujemProdajem):*\n")
+    if kp_results:
+        for i, r in enumerate(kp_results[:5], 1):
+            title = r.get("title", "")[:55]
+            price_text = r.get("price_text", "N/A")
+            url = r.get("url", "")
+            if url and not url.startswith("http"):
+                url = "https://www.kupujemprodajem.com" + url
+            if url:
+                lines.append(f"{i}. 🛒 [{title}]({url})\n   💰 {price_text}")
+            else:
+                lines.append(f"{i}. 🛒 {title}\n   💰 {price_text}")
+        kp_url = f"https://www.kupujemprodajem.com/pretraga?keywords={q}"
+        lines.append(f"\n🔍 [Svi oglasi na KP]({kp_url})")
+    else:
+        kp_url = f"https://www.kupujemprodajem.com/pretraga?keywords={q}"
+        lines.append(f"_Nije pronađeno na KP._\n🔍 [Pretraži ručno na KP]({kp_url})")
+
+    return "\n".join(lines)
+
+
 def format_webshop_results(results: list[dict], search_term: str) -> str:
-    """Formatuje agregirane webshop rezultate sortirane po cijeni."""
+    """Formatuje samo webshop rezultate (bez KP sekcije) — za fallback."""
     q = search_term.replace(' ', '+')
 
     if not results:
         return (
             f"❌ Nisam pronašao *{search_term}* u webshopovima.\n\n"
-            f"Pretražite ručno:\n"
+            f"Pretraži ručno:\n"
+            f"• [Eponuda](https://www.eponuda.com/search/?q={q})\n"
             f"• [Gigatron](https://www.gigatron.rs/pretraga?q={q})\n"
-            f"• [Tehnomanija](https://www.tehnomanija.rs/catalogsearch/result/?q={q})\n"
             f"• [WinWin](https://www.winwin.rs/catalogsearch/result/?q={q})"
         )
 
     lines = [f"🏪 *Webshop cijene za: {search_term}*\n"]
-    source_emoji = {"Gigatron": "🔵", "Tehnomanija": "🟠", "WinWin": "🟢"}
-
-    seen_sources = set()
     for i, r in enumerate(results[:6], 1):
         title = r.get("title", "")[:55]
         price_text = r.get("price_text", "N/A")
         url = r.get("url", "")
         source = r.get("source", "")
-        emoji = source_emoji.get(source, "🏪")
-        seen_sources.add(source)
-
         if url:
-            lines.append(f"{i}. {emoji} [{title}]({url})\n   💰 {price_text} — _{source}_")
+            lines.append(f"{i}. 🟢 [{title}]({url})\n   💰 {price_text} — _{source}_")
         else:
-            lines.append(f"{i}. {emoji} {title}\n   💰 {price_text} — _{source}_")
+            lines.append(f"{i}. 🟢 {title}\n   💰 {price_text} — _{source}_")
 
-    # Gigatron je SPA — uvijek daj link za ručnu pretragu
-    manual = [f"[Gigatron](https://www.gigatron.rs/pretraga?q={q})"]
-    # Dodaj linkove za scrappable sajtove koji nisu dali rezultate
-    if "Tehnomanija" not in seen_sources:
-        manual.append(f"[Tehnomanija](https://www.tehnomanija.rs/catalogsearch/result/?q={q})")
-    if "WinWin" not in seen_sources:
-        manual.append(f"[WinWin](https://www.winwin.rs/catalogsearch/result/?q={q})")
-    lines.append(f"\n🔍 Ručna pretraga: {' • '.join(manual)}")
-
+    lines.append(
+        f"\n🔍 Pretraži i na: "
+        f"[Eponuda](https://www.eponuda.com/search/?q={q}) • "
+        f"[Gigatron](https://www.gigatron.rs/pretraga?q={q})"
+    )
     return "\n".join(lines)
 
 
@@ -442,8 +486,9 @@ async def ask_gemini_webshop(user_message: str, retry_count: int = 0, max_retrie
 async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
     """
     Glavna search logika:
-    - Ako korisnik traži "na kupujem prodajem" ili tehničke proizvode → direktan KP scraping
-    - Inače → Gemini webshop pretraga
+    - Auto → PolvniAutomobili
+    - Nekretnine → Halooglasi
+    - Sve ostalo → Kombinirano: WinWin (webshop) + KupujemProdajem (polovno) paralelno
     """
     logger.info(f"[SEARCH] Korisnik {user_id}: '{text}'")
 
@@ -499,47 +544,34 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
             else:
                 reply = format_halooglasi_results(results, search_term)
 
-        elif kp_mode or tech_mode:
-            # ── Direktan KP scraping
+        else:
+            # ── Kombinirano: webshop cijene (WinWin) + polovni oglasi (KP)
+            # Vrijedi za: kp_mode, tech_mode i sve ostalo (bez auto/nekretnine)
             product_name, max_price = parse_ad_query(text)
             search_term = extract_search_term(product_name or text)
-            logger.info(f"[SEARCH] KP mod | term: '{search_term}' | max_price: {max_price} | kp_keyword={kp_mode} | tech={tech_mode}")
-
-            await thinking.edit_text(f"🔍 Tražim *{search_term}* na KupujemProdajem...")
-
-            # Scraping u asyncio thread da ne blokira bota
-            import asyncio
-            results = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: scraper.scrape_kupujemprodajem(search_term, max_price)
+            logger.info(
+                f"[SEARCH] KOMBINIRANO mod | term: '{search_term}' | max_price: {max_price} "
+                f"| kp={kp_mode} | tech={tech_mode}"
             )
 
-            reply = format_kp_results(results, search_term)
+            await thinking.edit_text(f"🔍 Pretražujem webshopove i KP za *{search_term}*...")
 
-            # Ako KP ne vrati ništa, pokušaj direktne webshopove
-            if not results and not kp_mode:
-                logger.info("[SEARCH] KP vratio 0 rezultata, fallback na webshop scrapers")
-                await thinking.edit_text(f"🏪 Pretražujem webshopove za *{search_term}*...")
-                import asyncio
-                results = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: scraper.scrape_webshops(search_term, max_price)
-                )
-                reply = format_webshop_results(results, search_term)
-
-        else:
-            # ── Direktni webshop scrapers (Gigatron, Tehnomanija, WinWin)
-            product_name, max_price = parse_ad_query(text)
-            search_term = extract_search_term(product_name or text)
-            logger.info(f"[SEARCH] WEBSHOP mod | term: '{search_term}' | max_price: {max_price}")
-
-            await thinking.edit_text(f"🏪 Pretražujem webshopove za *{search_term}*...")
             import asyncio
-            results = await asyncio.get_event_loop().run_in_executor(
+            # Pokretanje oba scrapers paralelno
+            webshop_task = asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: scraper.scrape_webshops(search_term, max_price)
             )
-            reply = format_webshop_results(results, search_term)
+            kp_task = asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: scraper.scrape_kupujemprodajem(search_term, max_price)
+            )
+            webshop_results, kp_results = await asyncio.gather(webshop_task, kp_task)
+
+            logger.info(
+                f"[SEARCH] Webshop: {len(webshop_results)} | KP: {len(kp_results)}"
+            )
+            reply = format_combined_results(webshop_results, kp_results, search_term)
 
     except Exception as e:
         logger.error(f"[SEARCH] EXCEPTION: {type(e).__name__}: {e}", exc_info=True)
