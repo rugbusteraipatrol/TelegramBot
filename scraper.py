@@ -485,12 +485,17 @@ def google_search_shops(search_term: str, max_price: float | None = None) -> lis
     """
     import os
 
-    api_key = os.getenv("GOOGLE_API_KEY")
+    # GOOGLE_CSE_API_KEY je odvojen od Gemini ključa (GOOGLE_API_KEY).
+    # Kreira se na: console.cloud.google.com → Credentials → API key
+    # API restrictions: Custom Search API
+    cse_api_key = os.getenv("GOOGLE_CSE_API_KEY") or os.getenv("GOOGLE_API_KEY")
     cse_id = os.getenv("GOOGLE_CSE_ID", "").strip()
 
-    if not api_key or not cse_id:
-        logger.warning("[GOOGLE_CSE] GOOGLE_CSE_ID nije postavljen u .env")
+    if not cse_api_key or not cse_id:
+        logger.warning("[GOOGLE_CSE] GOOGLE_CSE_ID ili GOOGLE_CSE_API_KEY nije postavljen u .env")
         return []
+
+    api_key = cse_api_key
 
     # Ograniči pretragu na poznate srpske shopove
     sites = (
