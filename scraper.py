@@ -324,168 +324,300 @@ def scrape_halooglasi(search_term: str, max_price: float | None = None) -> list[
 
 # ─── Webshop Scrapers ─────────────────────────────────────────────────────────
 
-def scrape_gigatron(search_term: str, max_price: float | None = None) -> list[dict]:
-    """Gigatron je Next.js SPA — server-side scraping nije moguć.
-    Vraća praznu listu, format funkcija dodaje direktan link."""
-    logger.info(f"[GIGATRON] SPA sajt — nije moguće scrapovati, vraćam []")
-    return []
+# Source emoji mapa
+SOURCE_EMOJI = {
+    "Gigatron": "🔵",
+    "WinWin": "🟢",
+    "Tehnomanija": "🟠",
+    "Eponuda": "🟣",
+    "Google": "🔍",
+}
 
 
-def _scrape_magento(base_url: str, site_name: str,
-                    search_term: str, max_price: float | None) -> list[dict]:
-    """Genericni scraper za Magento sajtove (Tehnomanija, WinWin)."""
+def _extract_price_from_text(text: str) -> float | None:
+    """Pokušava da izvuče cijenu iz teksta (snippet, naslov itd.)."""
+    if not text:
+        return None
+    # Npr: "14.999,00 din", "9.990 RSD", "€149", "149 EUR"
+    patterns = [
+        r"(\d{1,3}(?:[.\s]\d{3})*(?:[.,]\d{1,2})?)\s*(?:din|rsd|dinara)",
+        r"(\d{1,3}(?:[.\s]\d{3})*(?:[.,]\d{1,2})?)\s*(?:€|eur|euro)",
+        r"(?:od|cena|cijena|price)[:\s]+(\d[\d.,\s]+)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            price = _parse_price(m.group(1))
+            if price and price > 100:  # ignoriši sitne vrijednosti
+                return price
+    return None
+
+
+def scrape_eponuda(search_term: str, max_price: float | None = None) -> list[dict]:
+    """
+    Scrapa Eponuda.rs koristeći cloudscraper (Cloudflare bypass).
+    URL: https://www.eponuda.com/uporedicene?ep=UPIT
+
+    Potvrđeni CSS selektori (2024):
+      Container : div.b-paging-product--vertical
+      Title     : h3.l3-product-title
+      Link      : a[href] (prvi u kontejneru koji vodi na product stranicu)
+      Price     : span.b-paging-product__price  (attr event-viewitem-price)
+    """
+    try:
+        import cloudscraper as cs_lib
+    except ImportError:
+        logger.warning("[EPONUDA] cloudscraper nije instaliran — pip install cloudscraper")
+        return []
+
     results = []
-    url = f"{base_url}/catalogsearch/result/"
-    params = {"q": search_term}
-
-    logger.info(f"[{site_name.upper()}] Scraping: '{search_term}'")
-
-    # Session sa cookie-jem: simulira browsing da zaobiđe 403
-    session = requests.Session()
-    try:
-        session.get(base_url, headers=get_headers(), timeout=10)
-        time.sleep(random.uniform(1.0, 2.0))
-    except Exception:
-        pass
+    logger.info(f"[EPONUDA] Scraping: '{search_term}'")
 
     try:
-        resp = session.get(url, params=params, headers={
-            **get_headers(),
-            "Referer": base_url + "/",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        }, timeout=TIMEOUT)
+        cs = cs_lib.create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "mobile": False}
+        )
+        # Warm-up session (get cookies)
+        cs.get("https://www.eponuda.com", timeout=15)
+        time.sleep(random.uniform(0.5, 1.2))
 
-        if resp.status_code == 403:
-            logger.warning(f"[{site_name.upper()}] 403 Forbidden — bot detekcija aktivna")
+        url = "https://www.eponuda.com/uporedicene"
+        resp = cs.get(url, params={"ep": search_term}, timeout=25)
+        if resp.status_code != 200:
+            logger.warning(f"[EPONUDA] Status {resp.status_code}")
             return results
-        resp.raise_for_status()
+
         soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Potvrđeni selektor za product kontejnere
+        items = soup.select("div.b-paging-product--vertical")
+        logger.info(f"[EPONUDA] Pronađeno {len(items)} product kontejnera")
+
+        seen_urls = set()
+        brand = search_term.split()[0].lower() if search_term else ""
+
+        for item in items[:20]:
+            try:
+                # ── Naslov: h3.l3-product-title
+                title_el = item.select_one("h3.l3-product-title")
+                if not title_el:
+                    continue
+                title = title_el.get_text(" ", strip=True)
+                if not title or len(title) < 5:
+                    continue
+
+                # Brand filter
+                if brand and brand not in title.lower():
+                    logger.debug(f"[EPONUDA] Skip (brand filter): '{title[:40]}'")
+                    continue
+
+                # ── URL: prvi link koji vodi na product stranicu (ne sliku)
+                href = ""
+                for a in item.select("a[href]"):
+                    h = a.get("href", "")
+                    if h and not h.startswith(("http", "#", "javascript")):
+                        href = "https://www.eponuda.com" + h
+                        break
+                    elif h and "eponuda.com" in h:
+                        href = h
+                        break
+
+                if href in seen_urls:
+                    continue
+                seen_urls.add(href)
+
+                # ── Cijena: span.b-paging-product__price
+                # Koristimo data atribut za čistu numeričku vrijednost
+                price_el = item.select_one("span.b-paging-product__price")
+                price = None
+                price_text = "Vidi na Eponuda"
+                if price_el:
+                    # event-viewitem-price="14370.00" — najčistiji izvor cijene
+                    raw_attr = price_el.get("event-viewitem-price", "")
+                    if raw_attr:
+                        try:
+                            price = float(raw_attr)
+                            price_text = f"{price:,.0f} din"
+                        except ValueError:
+                            pass
+
+                    if not price:
+                        # Fallback: tekst unutar <b> taga (npr. "14.370,00 din")
+                        b_el = price_el.select_one("b")
+                        raw_text = b_el.get_text(strip=True) if b_el else price_el.get_text(strip=True)
+                        price = _parse_price(raw_text)
+                        price_text = raw_text if raw_text else price_text
+
+                # ── Filter po max_price (Eponuda = RSD, ~117 RSD = 1 EUR)
+                if max_price and price and price > max_price * 120:
+                    logger.debug(f"[EPONUDA] Skip (cijena {price:.0f} > {max_price*120:.0f}): '{title[:30]}'")
+                    continue
+
+                results.append({
+                    "title": title,
+                    "price": price,
+                    "price_text": price_text,
+                    "url": href,
+                    "source": "Eponuda",
+                })
+                logger.debug(f"[EPONUDA] ✓ {title[:45]} | {price_text}")
+
+            except Exception as e:
+                logger.debug(f"[EPONUDA] Parse error: {e}")
+
     except Exception as e:
-        logger.error(f"[{site_name.upper()}] Greška pri dohvatanju: {e}")
-        return results
+        logger.error(f"[EPONUDA] Greška: {e}")
 
-    # Magento standardni selektori
-    items = soup.select("li.product-item, div.product-item, .product-item-info")
-    if not items:
-        # Fallback: svaki article ili div sa linkom na proizvod
-        items = soup.find_all("article") or soup.select("div.item.product")
-
-    logger.info(f"[{site_name.upper()}] Pronađeno {len(items)} item-a")
-
-    for item in items[:12]:
-        try:
-            title_el = item.select_one("a.product-item-link, .product-item-name a, h2 a, h3 a")
-            if not title_el:
-                continue
-
-            title = title_el.get_text(strip=True)
-            href = title_el.get("href", "")
-            if href and not href.startswith("http"):
-                href = base_url + href
-
-            # Cijena: posebna, regularna, ili generički span.price
-            price_el = item.select_one(
-                ".special-price .price, .regular-price .price, "
-                "span.price, .price-wrapper .price"
-            )
-            price_text = price_el.get_text(strip=True) if price_el else ""
-            price = _parse_price(price_text)
-
-            if not _matches_price(price, max_price):
-                continue
-
-            # FIX #1: Strogi brand filter — prva riječ upita MORA biti u naslovu
-            brand = search_term.split()[0].lower() if search_term else ""
-            if brand and brand not in title.lower():
-                logger.debug(f"[{site_name.upper()}] Brand filter: '{title[:40]}' nema '{brand}'")
-                continue
-
-            results.append({
-                "title": title,
-                "price": price,
-                "price_text": price_text or "Cijena na sajtu",
-                "url": href,
-                "source": site_name,
-            })
-        except Exception as e:
-            logger.debug(f"[{site_name.upper()}] Parse error: {e}")
-
-    logger.info(f"[{site_name.upper()}] Pronađeno {len(results)} rezultata (brand='{search_term.split()[0] if search_term else ''}')")
+    results.sort(key=lambda r: (r["price"] is None, r["price"] or 0))
+    logger.info(f"[EPONUDA] {len(results)} rezultata za '{search_term}'")
     return results
 
 
-def scrape_tehnomanija(search_term: str, max_price: float | None = None) -> list[dict]:
-    return _scrape_magento("https://www.tehnomanija.rs", "Tehnomanija", search_term, max_price)
+def google_search_shops(search_term: str, max_price: float | None = None) -> list[dict]:
+    """
+    Google Custom Search JSON API — pretražuje srpske webshopove.
+    Zahtijeva GOOGLE_API_KEY i GOOGLE_CSE_ID u .env fajlu.
 
+    Setup:
+      1. Idi na https://programmablesearchengine.google.com/
+      2. Kreiraj novi search engine (Pretraži cijeli web)
+      3. Kopiraj Search engine ID u GOOGLE_CSE_ID
+    """
+    import os
 
-def scrape_winwin(search_term: str, max_price: float | None = None) -> list[dict]:
-    return _scrape_magento("https://www.winwin.rs", "WinWin", search_term, max_price)
+    api_key = os.getenv("GOOGLE_API_KEY")
+    cse_id = os.getenv("GOOGLE_CSE_ID", "").strip()
+
+    if not api_key or not cse_id:
+        logger.warning("[GOOGLE_CSE] GOOGLE_CSE_ID nije postavljen u .env")
+        return []
+
+    # Ograniči pretragu na poznate srpske shopove
+    sites = (
+        "site:gigatron.rs OR site:winwin.rs OR "
+        "site:tehnomanija.rs OR site:eponuda.com"
+    )
+    query = f"{search_term} {sites}"
+
+    params = {
+        "key": api_key,
+        "cx": cse_id,
+        "q": query,
+        "num": 10,
+        "gl": "rs",         # Geografija: Srbija
+        "hl": "sr",         # Jezik: srpski
+    }
+
+    logger.info(f"[GOOGLE_CSE] Pretraga: '{search_term}'")
+
+    try:
+        resp = requests.get(
+            "https://www.googleapis.com/customsearch/v1",
+            params=params,
+            timeout=15,
+        )
+
+        if resp.status_code == 429:
+            logger.error("[GOOGLE_CSE] Dnevni limit prekoračen (100 besplatnih/dan)")
+            return []
+        if resp.status_code == 400:
+            logger.error(f"[GOOGLE_CSE] Bad request — provjeri GOOGLE_CSE_ID: {resp.text[:200]}")
+            return []
+        resp.raise_for_status()
+        data = resp.json()
+
+    except Exception as e:
+        logger.error(f"[GOOGLE_CSE] Greška pri zahtjevu: {e}")
+        return []
+
+    results = []
+    for item in data.get("items", []):
+        title = item.get("title", "").strip()
+        link  = item.get("link", "").strip()
+        snippet = item.get("snippet", "").replace("\n", " ").strip()
+        pagemap = item.get("pagemap", {})
+
+        # ── Cijena iz strukturiranih podataka (pagemap)
+        price = None
+        price_text = ""
+        for offer_key in ("offer", "product"):
+            for offer in pagemap.get(offer_key, [])[:1]:
+                raw = offer.get("price") or offer.get("lowprice") or ""
+                if raw:
+                    price = _parse_price(str(raw))
+                    price_text = str(raw)
+                    break
+            if price:
+                break
+
+        # ── Fallback: izvuci iz snippet-a / naslova
+        if not price:
+            price = _extract_price_from_text(snippet + " " + title)
+            if price:
+                price_text = f"{price:,.0f} RSD"
+
+        if not price_text:
+            # Nema cijene — prikaži snippet kao opis
+            price_text = snippet[:90] + "…" if len(snippet) > 90 else snippet
+
+        # ── Filtriraj po max_price (RSD; gruba konverzija 120 RSD = 1 EUR)
+        if max_price and price and price > max_price * 120:
+            logger.debug(f"[GOOGLE_CSE] Cijena {price} RSD iznad limita, skip")
+            continue
+
+        # ── Odredi izvor
+        source = "Webshop"
+        for shop in ("gigatron.rs", "winwin.rs", "tehnomanija.rs", "eponuda.com"):
+            if shop in link:
+                source = shop.split(".")[0].capitalize()
+                break
+
+        # ── Brand filter: prva riječ upita mora biti u naslovu
+        brand = search_term.split()[0].lower() if search_term else ""
+        if brand and brand not in title.lower() and brand not in snippet.lower():
+            logger.debug(f"[GOOGLE_CSE] Brand filter skip: '{title[:50]}'")
+            continue
+
+        results.append({
+            "title": title,
+            "price": price,
+            "price_text": price_text,
+            "url": link,
+            "source": source,
+        })
+
+    # Ukloni duplikate i sortiraj
+    seen = set()
+    unique = []
+    for r in results:
+        if r["url"] not in seen:
+            seen.add(r["url"])
+            unique.append(r)
+
+    unique.sort(key=lambda r: (r["price"] is None, r["price"] or 0))
+    logger.info(f"[GOOGLE_CSE] {len(unique)} rezultata za '{search_term}'")
+    return unique
 
 
 def scrape_webshops(search_term: str, max_price: float | None = None) -> list[dict]:
     """
-    Scrapa WinWin webshop (Gigatron/Eponuda su SPA/403 — nisu scrappable).
-    Vraća stvarne rezultate sortirane po cijeni — nikad halucinacije.
-    Eponuda.rs i Gigatron.rs se prikazuju kao ručni linkovi u formatu odgovora.
+    Agregira webshop rezultate:
+      1. Google Custom Search (gigatron, winwin, tehnomanija, eponuda) — PRIMARY
+      2. Eponuda direct scrape (cloudscraper) — FALLBACK ako Google CSE nije konfigurisan
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import os
 
-    scrapers = [
-        ("WinWin", scrape_winwin),
-    ]
+    cse_id = os.getenv("GOOGLE_CSE_ID", "").strip()
 
-    all_results = []
+    if cse_id:
+        # Google CSE je konfigurisan → koristi ga
+        results = google_search_shops(search_term, max_price)
+        if results:
+            return results
+        logger.info("[WEBSHOP] Google CSE vratio 0 — fallback na Eponuda direct")
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {
-            executor.submit(fn, search_term, max_price): name
-            for name, fn in scrapers
-        }
-        for future in as_completed(futures, timeout=30):
-            name = futures[future]
-            try:
-                results = future.result()
-                logger.info(f"[WEBSHOP] {name}: {len(results)} rezultata")
-                all_results.extend(results)
-            except Exception as e:
-                logger.error(f"[WEBSHOP] {name} greška — preskačem: {e}")
-
-    # FIX #2: Filtriraj samo po brand-u (1. riječ) + modelu (2. riječ ako postoji)
-    # "Motorola Buds+ Sound by Bose" → filter traži "motorola" I "buds" u naslovu
-    # Ignoriše sekundarne pojmove: "Sound", "by", "Bose"
-    words = [w.lower() for w in search_term.split() if len(w) > 2]
-    key_words = words[:2]  # Samo brand + model, max 2 pojma
-    logger.info(f"[WEBSHOP] Filter ključnih pojmova: {key_words}")
-
-    filtered = []
-    for r in all_results:
-        title_lower = r.get("title", "").lower()
-        if all(w in title_lower for w in key_words):
-            filtered.append(r)
-        else:
-            logger.debug(f"[WEBSHOP] Filtriran: '{r['title'][:40]}' nema {key_words}")
-
-    if not filtered and all_results:
-        # Fallback: samo brand (prva riječ)
-        brand = key_words[0] if key_words else ""
-        filtered = [r for r in all_results if brand in r.get("title", "").lower()]
-        logger.info(f"[WEBSHOP] Brand+model filter dao 0, fallback na samo brand '{brand}': {len(filtered)} rezultata")
-
-    # Ukloni duplikate po URL-u
-    seen_urls = set()
-    unique_results = []
-    for r in filtered:
-        url = r.get("url", "")
-        if url and url not in seen_urls:
-            seen_urls.add(url)
-            unique_results.append(r)
-        elif not url:
-            unique_results.append(r)
-
-    # Sortiraj po cijeni (None na kraj)
-    unique_results.sort(key=lambda r: (r["price"] is None, r["price"] or 0))
-    logger.info(f"[WEBSHOP] Ukupno: {len(unique_results)} relevantnih rezultata za '{search_term}'")
-    return unique_results
+    # Fallback: direktan Eponuda scrape
+    return scrape_eponuda(search_term, max_price)
 
 
 # ─── Dispatcher ───────────────────────────────────────────────────────────────
@@ -494,9 +626,7 @@ _SCRAPERS = {
     "polovniautomobili.com": scrape_polovniautomobili,
     "kupujemprodajem.com": scrape_kupujemprodajem,
     "halooglasi.com": scrape_halooglasi,
-    "gigatron.rs": scrape_gigatron,
-    "tehnomanija.rs": scrape_tehnomanija,
-    "winwin.rs": scrape_winwin,
+    "eponuda.com": scrape_eponuda,
 }
 
 

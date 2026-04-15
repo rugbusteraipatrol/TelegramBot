@@ -316,33 +316,41 @@ def format_kp_results(results: list[dict], search_term: str) -> str:
 def format_combined_results(webshop_results: list[dict], kp_results: list[dict], search_term: str) -> str:
     """
     Formatuje rezultate u dva dijela:
-      🏪 Webshop cijene (WinWin + manual linkovi za Eponuda/Gigatron)
+      🏪 Webshop cijene (Google CSE / Eponuda direct)
       🔄 Polovni oglasi (KupujemProdajem)
     """
     q = search_term.replace(' ', '+')
     lines = []
 
+    source_emoji = {
+        "Gigatron":   "🔵",
+        "Winwin":     "🟢",
+        "Tehnomanija":"🟠",
+        "Eponuda":    "🟣",
+        "Google":     "🔍",
+        "Webshop":    "🏪",
+    }
+
     # ── Sekcija 1: Webshop cijene
     lines.append(f"🏪 *Webshop cijene za: {search_term}*\n")
     if webshop_results:
-        for i, r in enumerate(webshop_results[:5], 1):
+        for i, r in enumerate(webshop_results[:6], 1):
             title = r.get("title", "")[:55]
             price_text = r.get("price_text", "N/A")
             url = r.get("url", "")
-            source = r.get("source", "")
+            source = r.get("source", "Webshop")
+            emoji = source_emoji.get(source, "🏪")
             if url:
-                lines.append(f"{i}. 🟢 [{title}]({url})\n   💰 {price_text} — _{source}_")
+                lines.append(f"{i}. {emoji} [{title}]({url})\n   💰 {price_text} — _{source}_")
             else:
-                lines.append(f"{i}. 🟢 {title}\n   💰 {price_text} — _{source}_")
+                lines.append(f"{i}. {emoji} {title}\n   💰 {price_text} — _{source}_")
     else:
         lines.append("_Nije pronađeno u webshopovima._")
 
-    # Ručni linkovi: Eponuda (glavni) i Gigatron
-    lines.append(
-        f"\n🔍 Pretraži i na: "
-        f"[Eponuda](https://www.eponuda.com/search/?q={q}) • "
-        f"[Gigatron](https://www.gigatron.rs/pretraga?q={q})"
-    )
+    # Ručni linkovi na Eponuda i Gigatron
+    eponuda_url = f"https://www.eponuda.com/uporedicene?ep={q}"
+    gigatron_url = f"https://www.gigatron.rs/pretraga?q={q}"
+    lines.append(f"\n🔍 Pretraži i na: [Eponuda]({eponuda_url}) • [Gigatron]({gigatron_url})")
 
     # ── Sekcija 2: Polovni oglasi (KP)
     lines.append(f"\n━━━━━━━━━━━━━━━━━━━━")
@@ -375,7 +383,7 @@ def format_webshop_results(results: list[dict], search_term: str) -> str:
         return (
             f"❌ Nisam pronašao *{search_term}* u webshopovima.\n\n"
             f"Pretraži ručno:\n"
-            f"• [Eponuda](https://www.eponuda.com/search/?q={q})\n"
+            f"• [Eponuda](https://www.eponuda.com/uporedicene?ep={q})\n"
             f"• [Gigatron](https://www.gigatron.rs/pretraga?q={q})\n"
             f"• [WinWin](https://www.winwin.rs/catalogsearch/result/?q={q})"
         )
