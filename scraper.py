@@ -339,6 +339,82 @@ SOURCE_EMOJI = {
 }
 
 
+def _scrape_magento(base_url: str, site_name: str,
+                    search_term: str, max_price: float | None) -> list[dict]:
+    """Genericni scraper za Magento sajtove (WinWin, Tehnomanija)."""
+    results = []
+    url = f"{base_url}/catalogsearch/result/"
+    # Koristi skraćeni upit (prve 3 riječi)
+    short_term = " ".join(search_term.split()[:3])
+    params = {"q": short_term}
+    logger.info(f"[{site_name.upper()}] Scraping: '{short_term}'")
+
+    session = requests.Session()
+    try:
+        session.get(base_url, headers=get_headers(), timeout=10)
+        time.sleep(random.uniform(0.5, 1.5))
+    except Exception:
+        pass
+
+    try:
+        resp = session.get(url, params=params, headers={
+            **get_headers(),
+            "Referer": base_url + "/",
+        }, timeout=TIMEOUT)
+        if resp.status_code == 403:
+            logger.warning(f"[{site_name.upper()}] 403 Forbidden")
+            return results
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+    except Exception as e:
+        logger.error(f"[{site_name.upper()}] Greška: {e}")
+        return results
+
+    items = soup.select("li.product-item, div.product-item, .product-item-info")
+    if not items:
+        items = soup.find_all("article") or soup.select("div.item.product")
+
+    brand = search_term.split()[0].lower() if search_term else ""
+
+    for item in items[:12]:
+        try:
+            title_el = item.select_one("a.product-item-link, .product-item-name a, h2 a, h3 a")
+            if not title_el:
+                continue
+            title = title_el.get_text(strip=True)
+            href = title_el.get("href", "")
+            if href and not href.startswith("http"):
+                href = base_url + href
+
+            # Word boundary filter — "Bambu" ne smije matchati "bambus"
+            if brand and not re.search(rf'\b{re.escape(brand)}\b', title.lower()):
+                continue
+
+            price_el = item.select_one(
+                ".special-price .price, .regular-price .price, span.price, .price-wrapper .price"
+            )
+            price_text = price_el.get_text(strip=True) if price_el else ""
+            price = _parse_price(price_text)
+
+            if not _matches_price(price, max_price):
+                continue
+
+            results.append({
+                "title": title, "price": price,
+                "price_text": price_text or "Cijena na sajtu",
+                "url": href, "source": site_name,
+            })
+        except Exception:
+            continue
+
+    logger.info(f"[{site_name.upper()}] {len(results)} rezultata")
+    return results
+
+
+def scrape_winwin(search_term: str, max_price: float | None = None) -> list[dict]:
+    return _scrape_magento("https://www.winwin.rs", "WinWin", search_term, max_price)
+
+
 def _extract_price_from_text(text: str) -> float | None:
     """Pokušava da izvuče cijenu iz teksta (snippet, naslov itd.)."""
     if not text:
@@ -616,23 +692,33 @@ def google_search_shops(search_term: str, max_price: float | None = None) -> lis
 
 def scrape_webshops(search_term: str, max_price: float | None = None) -> list[dict]:
     """
-    Agregira webshop rezultate:
-      1. Google Custom Search (gigatron, winwin, tehnomanija, eponuda) — PRIMARY
-      2. Eponuda direct scrape (cloudscraper) — FALLBACK ako Google CSE nije konfigurisan
+    Hierarhija izvora za webshop cijene:
+      1. Google Custom Search (ako GOOGLE_CSE_ID i GOOGLE_CSE_API_KEY postavljeni)
+      2. WinWin Magento scraper (requests, bez cloud-scraper)
+      3. Eponuda cloudscraper (može biti blokiran sa cloud IP-ja)
     """
     import os
 
+    # ── 1. Google Custom Search
     cse_id = os.getenv("GOOGLE_CSE_ID", "").strip()
-
     if cse_id:
-        # Google CSE je konfigurisan → koristi ga
         results = google_search_shops(search_term, max_price)
         if results:
+            logger.info(f"[WEBSHOP] Google CSE: {len(results)} rezultata")
             return results
-        logger.info("[WEBSHOP] Google CSE vratio 0 — fallback na Eponuda direct")
+        logger.info("[WEBSHOP] Google CSE: 0 → fallback na WinWin")
 
-    # Fallback: direktan Eponuda scrape
-    return scrape_eponuda(search_term, max_price)
+    # ── 2. WinWin (Magento, radi bez cloud-scraper)
+    results = scrape_winwin(search_term, max_price)
+    if results:
+        logger.info(f"[WEBSHOP] WinWin: {len(results)} rezultata")
+        return results
+    logger.info("[WEBSHOP] WinWin: 0 → fallback na Eponuda")
+
+    # ── 3. Eponuda cloudscraper (može biti blokiran sa cloud IP-ja)
+    results = scrape_eponuda(search_term, max_price)
+    logger.info(f"[WEBSHOP] Eponuda: {len(results)} rezultata")
+    return results
 
 
 # ─── Dispatcher ───────────────────────────────────────────────────────────────
