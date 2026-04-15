@@ -579,7 +579,24 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
             logger.info(
                 f"[SEARCH] Webshop: {len(webshop_results)} | KP: {len(kp_results)}"
             )
-            reply = format_combined_results(webshop_results, kp_results, search_term)
+
+            if not webshop_results and not kp_results:
+                # Svi scrapers su zakazali (Railway IP blokiran ili CSE greška)
+                # → Fallback na Gemini AI koji radi direktno kroz API bez web scrapinga
+                logger.info("[SEARCH] Webshop+KP = 0 → Gemini AI fallback")
+                await thinking.edit_text(f"🔍 Pretražujem AI za *{search_term}*...")
+                gemini_prompt = (
+                    f"Pronađi cijene i oglase za '{search_term}' u Srbiji.\n\n"
+                    f"1. Webshop cijene — Gigatron, WinWin, Tehnomanija, Eponuda (novi proizvodi)\n"
+                    f"2. Polovni oglasi — KupujemProdajem (rabljeni)\n\n"
+                    f"Za svaki rezultat napiši: naziv • cijena • direktan link\n"
+                    f"Sortiraj od najjeftinije. Odgovori na srpskom."
+                )
+                if max_price:
+                    gemini_prompt += f"\nMaksimalna cijena: {max_price}€"
+                reply = await ask_gemini_webshop(gemini_prompt)
+            else:
+                reply = format_combined_results(webshop_results, kp_results, search_term)
 
     except Exception as e:
         logger.error(f"[SEARCH] EXCEPTION: {type(e).__name__}: {e}", exc_info=True)
@@ -926,6 +943,132 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"✅ ZAVRŠENO — Provjereno {total_checked}, pronađeno {total_new_found} novih")
 
 
+async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin debug komanda — testira scrapers direktno sa Railway servera."""
+    import asyncio, os, time
+    import requests as _req
+
+    await update.message.reply_text("🔧 Testiram scrapers (može trajati ~30s)...")
+
+    lines = ["🔧 *Debug Report*\n"]
+
+    # Env vars
+    cse_id  = os.getenv("GOOGLE_CSE_ID", "")
+    cse_key = os.getenv("GOOGLE_CSE_API_KEY", "")
+    g_key   = os.getenv("GOOGLE_API_KEY", "")
+    lines.append(f"*ENV:*")
+    lines.append(f"  CSE\\_ID: `{'✅ ' + cse_id[:12] + '…' if cse_id else '❌ nije postavljen'}`")
+    lines.append(f"  CSE\\_KEY: `{'✅ ' + cse_key[-8:] if cse_key else '❌ nije postavljen'}`")
+    lines.append(f"  GOOGLE\\_KEY: `{'✅ …' + g_key[-8:] if g_key else '❌ nije postavljen'}`\n")
+
+    # ── Test Google CSE (direktno, bez wrapera — da vidimo tačan HTTP status)
+    lines.append("*Google CSE (direktan test):*")
+    for key_label, key_val in [("CSE\\_KEY", cse_key), ("GOOGLE\\_KEY", g_key)]:
+        if not key_val or not cse_id:
+            continue
+        try:
+            t0 = time.time()
+            r = _req.get(
+                "https://www.googleapis.com/customsearch/v1",
+                params={"key": key_val, "cx": cse_id,
+                        "q": "Samsung Galaxy site:gigatron.rs", "num": 1},
+                timeout=12,
+            )
+            elapsed = time.time() - t0
+            if r.status_code == 200:
+                n = len(r.json().get("items", []))
+                lines.append(f"  {key_label}: ✅ HTTP 200, {n} rezultata ({elapsed:.1f}s)")
+            else:
+                try:
+                    err = r.json().get("error", {}).get("message", r.text[:120])
+                except Exception:
+                    err = r.text[:120]
+                lines.append(f"  {key_label}: ❌ HTTP {r.status_code} — `{err[:100]}`")
+        except Exception as e:
+            lines.append(f"  {key_label}: ❌ `{str(e)[:80]}`")
+
+    # ── Test KP (provjeri HTTP status direktno)
+    lines.append("\n*KP direktan HTTP test:*")
+    try:
+        t0 = time.time()
+        r = _req.get(
+            "https://www.kupujemprodajem.com/pretraga",
+            params={"keywords": "Samsung Galaxy"},
+            headers=scraper.get_headers(),
+            timeout=15,
+            allow_redirects=True,
+        )
+        elapsed = time.time() - t0
+        is_cf = "cloudflare" in r.text.lower() or "cf-ray" in str(r.headers).lower()
+        has_articles = "<article" in r.text
+        lines.append(
+            f"  HTTP {r.status_code} ({elapsed:.1f}s) | "
+            f"{'⚠️ Cloudflare' if is_cf else '✅ Nema CF'} | "
+            f"{'✅ article tagovi' if has_articles else '❌ nema article tagova'}"
+        )
+    except Exception as e:
+        lines.append(f"  ❌ `{str(e)[:80]}`")
+
+    # ── Test KP scraper
+    t0 = time.time()
+    try:
+        kp_r = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: scraper.scrape_kupujemprodajem("Samsung Galaxy A55")
+        )
+        lines.append(f"*KP scraper:* {'✅ ' + str(len(kp_r)) + ' rezultata' if kp_r else '❌ 0 rezultata'} ({time.time()-t0:.1f}s)")
+    except Exception as e:
+        lines.append(f"*KP scraper:* ❌ `{str(e)[:60]}`")
+
+    # ── Test WinWin
+    t0 = time.time()
+    try:
+        ww_r = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: scraper.scrape_winwin("Samsung Galaxy")
+        )
+        lines.append(f"*WinWin:* {'✅ ' + str(len(ww_r)) + ' rezultata' if ww_r else '❌ 0 (403?)'} ({time.time()-t0:.1f}s)")
+    except Exception as e:
+        lines.append(f"*WinWin:* ❌ `{str(e)[:60]}`")
+
+    # ── Test Google CSE (via scraper wrapper)
+    if cse_id and (cse_key or g_key):
+        t0 = time.time()
+        try:
+            cse_r = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: scraper.google_search_shops("Samsung Galaxy A55")
+            )
+            lines.append(f"*Google CSE scraper:* {'✅ ' + str(len(cse_r)) + ' rezultata' if cse_r else '❌ 0'} ({time.time()-t0:.1f}s)")
+        except Exception as e:
+            lines.append(f"*Google CSE scraper:* ❌ `{str(e)[:60]}`")
+    else:
+        lines.append("*Google CSE scraper:* ⏭ Nije konfigurisan")
+
+    # ── Test Eponuda
+    t0 = time.time()
+    try:
+        ep_r = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: scraper.scrape_eponuda("Samsung Galaxy")
+        )
+        lines.append(f"*Eponuda:* {'✅ ' + str(len(ep_r)) + ' rezultata' if ep_r else '❌ 0 (Cloudflare?)'} ({time.time()-t0:.1f}s)")
+    except Exception as e:
+        lines.append(f"*Eponuda:* ❌ `{str(e)[:60]}`")
+
+    # ── Test Gemini
+    lines.append("\n*Gemini API test:*")
+    try:
+        t0 = time.time()
+        gemini_r = await ask_gemini_webshop("Koliko košta Samsung Galaxy A55 u Srbiji? Daj jednu cijenu.")
+        is_ok = len(gemini_r) > 20 and "greška" not in gemini_r.lower()
+        lines.append(f"  {'✅' if is_ok else '❌'} ({time.time()-t0:.1f}s): `{gemini_r[:80]}`")
+    except Exception as e:
+        lines.append(f"  ❌ `{str(e)[:80]}`")
+
+    try:
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    except Exception:
+        # Fallback bez Markdown ako ima special charova
+        await update.message.reply_text("\n".join(lines).replace("*", "").replace("`", "").replace("_", ""))
+
+
 # ─── Main
 
 def main():
@@ -935,6 +1078,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("setpremium", cmd_setpremium))
     app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("debug", cmd_debug))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
     app.job_queue.run_repeating(check_ads_job, interval=600, first=60)

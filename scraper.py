@@ -562,26 +562,35 @@ def scrape_eponuda(search_term: str, max_price: float | None = None) -> list[dic
 def google_search_shops(search_term: str, max_price: float | None = None) -> list[dict]:
     """
     Google Custom Search JSON API — pretražuje srpske webshopove.
-    Zahtijeva GOOGLE_API_KEY i GOOGLE_CSE_ID u .env fajlu.
+    Automatski pokušava GOOGLE_CSE_API_KEY, pa GOOGLE_API_KEY kao fallback.
 
     Setup:
       1. Idi na https://programmablesearchengine.google.com/
-      2. Kreiraj novi search engine (Pretraži cijeli web)
+      2. Kreiraj novi search engine
       3. Kopiraj Search engine ID u GOOGLE_CSE_ID
+      4. Omogući Custom Search API na GCP projektu
     """
     import os
 
-    # GOOGLE_CSE_API_KEY je odvojen od Gemini ključa (GOOGLE_API_KEY).
-    # Kreira se na: console.cloud.google.com → Credentials → API key
-    # API restrictions: Custom Search API
-    cse_api_key = os.getenv("GOOGLE_CSE_API_KEY") or os.getenv("GOOGLE_API_KEY")
     cse_id = os.getenv("GOOGLE_CSE_ID", "").strip()
-
-    if not cse_api_key or not cse_id:
-        logger.warning("[GOOGLE_CSE] GOOGLE_CSE_ID ili GOOGLE_CSE_API_KEY nije postavljen u .env")
+    if not cse_id:
+        logger.warning("[GOOGLE_CSE] GOOGLE_CSE_ID nije postavljen u .env")
         return []
 
-    api_key = cse_api_key
+    # Pokušaj oba ključa — CSE-specifični prvi, pa Gemini ključ kao fallback
+    # Razlog: CSE ključ može nemati Custom Search API enabled na svom projektu
+    cse_key = os.getenv("GOOGLE_CSE_API_KEY", "").strip()
+    g_key   = os.getenv("GOOGLE_API_KEY", "").strip()
+
+    keys_to_try = []
+    if cse_key:
+        keys_to_try.append(("GOOGLE_CSE_API_KEY", cse_key))
+    if g_key and g_key != cse_key:
+        keys_to_try.append(("GOOGLE_API_KEY", g_key))
+
+    if not keys_to_try:
+        logger.warning("[GOOGLE_CSE] Nijedan API ključ nije dostupan")
+        return []
 
     # Ograniči pretragu na poznate srpske shopove
     sites = (
@@ -590,35 +599,51 @@ def google_search_shops(search_term: str, max_price: float | None = None) -> lis
     )
     query = f"{search_term} {sites}"
 
-    params = {
-        "key": api_key,
-        "cx": cse_id,
-        "q": query,
-        "num": 10,
-        "gl": "rs",         # Geografija: Srbija
-        "hl": "sr",         # Jezik: srpski
-    }
+    data = None
+    used_key_label = ""
 
-    logger.info(f"[GOOGLE_CSE] Pretraga: '{search_term}'")
+    for key_label, api_key in keys_to_try:
+        params = {
+            "key": api_key,
+            "cx": cse_id,
+            "q": query,
+            "num": 10,
+            "gl": "rs",         # Geografija: Srbija
+            "hl": "sr",         # Jezik: srpski
+        }
+        logger.info(f"[GOOGLE_CSE] Pokušaj sa {key_label} (...{api_key[-8:]}): '{search_term}'")
 
-    try:
-        resp = requests.get(
-            "https://www.googleapis.com/customsearch/v1",
-            params=params,
-            timeout=15,
-        )
+        try:
+            resp = requests.get(
+                "https://www.googleapis.com/customsearch/v1",
+                params=params,
+                timeout=15,
+            )
 
-        if resp.status_code == 429:
-            logger.error("[GOOGLE_CSE] Dnevni limit prekoračen (100 besplatnih/dan)")
-            return []
-        if resp.status_code == 400:
-            logger.error(f"[GOOGLE_CSE] Bad request — provjeri GOOGLE_CSE_ID: {resp.text[:200]}")
-            return []
-        resp.raise_for_status()
-        data = resp.json()
+            if resp.status_code == 429:
+                logger.error("[GOOGLE_CSE] Dnevni limit prekoračen (100 besplatnih/dan)")
+                return []  # Rate limit vrijedi za sve ključeve
 
-    except Exception as e:
-        logger.error(f"[GOOGLE_CSE] Greška pri zahtjevu: {e}")
+            if resp.status_code in (400, 403):
+                try:
+                    err_json = resp.json()
+                    err_msg = err_json.get("error", {}).get("message", resp.text[:200])
+                except Exception:
+                    err_msg = resp.text[:200]
+                logger.warning(f"[GOOGLE_CSE] {key_label} HTTP {resp.status_code}: {err_msg}")
+                continue  # Pokušaj sljedeći ključ
+
+            resp.raise_for_status()
+            data = resp.json()
+            used_key_label = key_label
+            break  # Uspješno!
+
+        except Exception as e:
+            logger.error(f"[GOOGLE_CSE] {key_label} greška: {e}")
+            continue
+
+    if data is None:
+        logger.warning("[GOOGLE_CSE] Svi ključevi neuspješni — vraćam []")
         return []
 
     results = []
@@ -686,7 +711,7 @@ def google_search_shops(search_term: str, max_price: float | None = None) -> lis
             unique.append(r)
 
     unique.sort(key=lambda r: (r["price"] is None, r["price"] or 0))
-    logger.info(f"[GOOGLE_CSE] {len(unique)} rezultata za '{search_term}'")
+    logger.info(f"[GOOGLE_CSE] ✅ {len(unique)} rezultata za '{search_term}' (via {used_key_label})")
     return unique
 
 
