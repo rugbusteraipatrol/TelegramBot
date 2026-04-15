@@ -586,15 +586,28 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
                 logger.info("[SEARCH] Webshop+KP = 0 → Gemini AI fallback")
                 await thinking.edit_text(f"🔍 Pretražujem AI za *{search_term}*...")
                 gemini_prompt = (
-                    f"Pronađi cijene i oglase za '{search_term}' u Srbiji.\n\n"
-                    f"1. Webshop cijene — Gigatron, WinWin, Tehnomanija, Eponuda (novi proizvodi)\n"
+                    f"Pronađi cijene za '{search_term}' u Srbiji.\n\n"
+                    f"VAŽNO: Koristi Google Search i navedi SAMO stvarne rezultate koje si našao.\n"
+                    f"NIKADA ne izmišljaj linkove — uključi SAMO URL koji si vidio u search rezultatima.\n\n"
+                    f"1. Webshop cijene — Gigatron, WinWin, Tehnomanija, Eponuda, Shoppster (novi)\n"
                     f"2. Polovni oglasi — KupujemProdajem (rabljeni)\n\n"
-                    f"Za svaki rezultat napiši: naziv • cijena • direktan link\n"
+                    f"Format: naziv • cijena u RSD ili EUR • direktan link\n"
                     f"Sortiraj od najjeftinije. Odgovori na srpskom."
                 )
                 if max_price:
                     gemini_prompt += f"\nMaksimalna cijena: {max_price}€"
-                reply = await ask_gemini_webshop(gemini_prompt)
+                gemini_reply = await ask_gemini_webshop(gemini_prompt)
+
+                # Dodaj disclaimer i ručne linkove za provjeru
+                q = search_term.replace(' ', '+')
+                disclaimer = (
+                    f"\n\n━━━━━━━━━━━━━━━━━━━━\n"
+                    f"⚠️ _AI prijedlozi — preporučujemo provjeru:_\n"
+                    f"[Eponuda](https://www.eponuda.com/uporedicene?ep={q}) • "
+                    f"[Gigatron](https://www.gigatron.rs/pretraga?q={q}) • "
+                    f"[KP](https://www.kupujemprodajem.com/pretraga?keywords={q})"
+                )
+                reply = gemini_reply + disclaimer
             else:
                 reply = format_combined_results(webshop_results, kp_results, search_term)
 
@@ -724,7 +737,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ *Praćenje aktivirano!*\n\n"
             f"📦 {search_term}{price_text}\n"
             f"📍 Sajt: `{site}`\n"
-            f"🔄 Provjera svakih 12 sati{limit_text}\n\n"
+            f"🔄 Provjera svakih 10 minuta{limit_text}\n\n"
             f"Obavijestit ću te čim nađem novi oglas! 🔔",
             parse_mode="Markdown",
             reply_markup=MAIN_KEYBOARD,
@@ -871,15 +884,15 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
                     logger.debug(f"  ⚠️ Filtriran (no words): '{r.get('title', '')}'")
                     continue
 
-                # Strategy 2: If search term contains number (e.g., "Golf 5"), check for exact match
-                # Don't match "Golf 5" with "Golf 4", "Golf 6", "Golf 45", etc.
+                # Strategy 2: If search term contains a MODEL number (e.g., "Golf 5"), check for exact match
+                # Skip large numbers (> 9999) — they're likely prices/mileage, not model identifiers
+                # e.g. "opel mokka 16000" → ignore 16000; "Golf 5" → require "5" in title
                 import re
-                numbers_in_search = re.findall(r'\d+', search_term_lower)
-                if numbers_in_search:
-                    # For each number in search term, check if it appears in title
+                all_numbers_in_search = re.findall(r'\d+', search_term_lower)
+                model_numbers = [n for n in all_numbers_in_search if int(n) <= 9999]
+                if model_numbers:
                     all_numbers_found = True
-                    for num in numbers_in_search:
-                        # Check for isolated number: "Golf 5" should match "Golf 5" but not "Golf 45"
+                    for num in model_numbers:
                         if not re.search(rf'\b{num}\b', title_lower):
                             logger.debug(f"  ⚠️ Filtriran (version): '{r.get('title', '')}' nema '{num}'")
                             all_numbers_found = False

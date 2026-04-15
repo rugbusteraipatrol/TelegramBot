@@ -106,13 +106,17 @@ def scrape_polovniautomobili(search_term: str, max_price: float | None = None) -
     results = []
     url = "https://www.polovniautomobili.com/auto-oglasi/pretraga"
 
-    # NOTE: Server search is not reliable - it returns random vehicles
-    # We'll fetch results and do basic filtering
+    # Koristi prve 2 ključne riječi kao server-side filter (PA search je nepouzdan za duge upite)
+    # "opel mokka 16000" → "opel mokka" (brojevi koji izgledaju kao cijene se ignorišu)
+    search_words = [w for w in search_term.split() if not w.isdigit() or int(w) <= 9999]
+    short_term = " ".join(search_words[:2])
+
     params = {
         "sort": "renewDate",
+        "q": short_term,
         **({"price_to": int(max_price)} if max_price else {}),
     }
-    logger.info(f"🔗 PA Scraping: {url} | search='{search_term}' | max_price={max_price}")
+    logger.info(f"🔗 PA Scraping: {url} | q='{short_term}' | search='{search_term}' | max_price={max_price}")
 
     soup = _get(url, params=params)
     if not soup:
