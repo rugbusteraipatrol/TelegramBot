@@ -178,16 +178,21 @@ def scrape_kupujemprodajem(search_term: str, max_price: float | None = None) -> 
     results = []
     url = "https://www.kupujemprodajem.com/pretraga"
 
-    # Za mobilne telefone: postavi minimum cijenu (izbegni dijelove i dodatnu opremu)
-    # 80€ je dovoljno da filtrira dijelove (20-40€) a da uključi rabljene telefone (50-100€)
-    min_price = 80 if "iphone" in search_term.lower() or "telefon" in search_term.lower() or "samsung" in search_term.lower() or "galaxy" in search_term.lower() else 10
+    # Skrati upit na prve 3 ključne riječi — KP loše pretražuje duge stringove
+    # "Bambu Lab A1 3D stampac" → "Bambu Lab A1"
+    kp_query = " ".join(search_term.split()[:3])
+    if kp_query != search_term:
+        logger.info(f"🔗 KP: skratio upit '{search_term}' → '{kp_query}'")
+
+    # Za mobilne telefone: postavi minimum cijenu (izbjegni dijelove i dodatnu opremu)
+    min_price = 80 if any(w in kp_query.lower() for w in ["iphone", "telefon", "samsung", "galaxy"]) else 10
 
     params = {
-        "keywords": search_term,
+        "keywords": kp_query,
         "currency": "eur",
         **({"priceTo": int(max_price)} if max_price else {}),
     }
-    logger.info(f"🔗 KP Scraping: {url} | keywords='{search_term}' | max_price={max_price} | min_price={min_price}")
+    logger.info(f"🔗 KP Scraping: {url} | keywords='{kp_query}' | max_price={max_price} | min_price={min_price}")
 
     soup = _get(url, params=params)
     if not soup:
@@ -381,8 +386,13 @@ def scrape_eponuda(search_term: str, max_price: float | None = None) -> list[dic
         cs.get("https://www.eponuda.com", timeout=15)
         time.sleep(random.uniform(0.5, 1.2))
 
+        # Koristi samo prve 3 značajne riječi — Eponuda loše reaguje na duge upite
+        # "Bambu Lab A1 3D stampac" → "Bambu Lab A1"
+        ep_query = " ".join(search_term.split()[:3])
+        logger.info(f"[EPONUDA] Query: '{ep_query}' (originalni: '{search_term}')")
+
         url = "https://www.eponuda.com/uporedicene"
-        resp = cs.get(url, params={"ep": search_term}, timeout=25)
+        resp = cs.get(url, params={"ep": ep_query}, timeout=25)
         if resp.status_code != 200:
             logger.warning(f"[EPONUDA] Status {resp.status_code}")
             return results
