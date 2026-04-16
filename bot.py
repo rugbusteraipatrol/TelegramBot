@@ -1106,6 +1106,20 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("\n".join(lines).replace("*", "").replace("`", "").replace("_", ""))
 
 
+async def cmd_resetcache(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin komanda: /resetcache — briše known_urls za sve aktivne oglase."""
+    try:
+        conn = db.get_conn()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE tracked_ads SET known_urls = '[]'")
+        conn.commit()
+        rows = cursor.rowcount
+        conn.close()
+        await update.message.reply_text(f"✅ Cache obrisan za {rows} oglasa.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Greška: {e}")
+
+
 # ─── Main
 
 def main():
@@ -1116,6 +1130,7 @@ def main():
     app.add_handler(CommandHandler("setpremium", cmd_setpremium))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("debug", cmd_debug))
+    app.add_handler(CommandHandler("resetcache", cmd_resetcache))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
     app.job_queue.run_repeating(check_ads_job, interval=600, first=60)
