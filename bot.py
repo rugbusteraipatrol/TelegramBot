@@ -814,6 +814,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await do_search(update, user.id, text, is_premium)
 
 
+# Pamti kada je zadnji put poslan dnevni ručni link za PA (po ad_id)
+_pa_reminder_last_sent: dict[int, datetime] = {}
+
 # ─── Background job — provjera oglasa
 
 async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
@@ -869,6 +872,27 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
                     continue
 
             results = scraper.scrape_site(ad["site"], ad["search_term"], ad["max_price"])
+
+            # PA: ako 0 rezultata (403/bot-detection), pošalji dnevni ručni link
+            if not results and ad["site"] == "polovniautomobili.com":
+                last_sent = _pa_reminder_last_sent.get(ad["id"])
+                now = datetime.now()
+                if last_sent is None or (now - last_sent).total_seconds() > 86400:
+                    q = ad["search_term"].replace(" ", "+")
+                    pa_url = (
+                        f"https://www.polovniautomobili.com/auto-oglasi/pretraga?q={q}"
+                    )
+                    try:
+                        await context.bot.send_message(
+                            chat_id=ad["user_id"],
+                            text=f"🔍 Pretraži ručno: [{ad['search_term']} na PA]({pa_url})",
+                            parse_mode="Markdown",
+                        )
+                        _pa_reminder_last_sent[ad["id"]] = now
+                        logger.info(f" 📨 PA ručni link poslan za '{ad['search_term']}'")
+                    except Exception as send_err:
+                        logger.error(f" ❌ Greška pri slanju PA linka: {send_err}")
+                continue  # nema rezultata — preskoči filtriranje i known_urls logiku
 
             # CLIENT-SIDE FILTERING: Filter by search term (website search is often unreliable)
             search_term_lower = ad["search_term"].lower()
