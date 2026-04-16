@@ -903,7 +903,7 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
                 title_lower = r.get("title", "").lower()
 
                 # Strategy 1: Check if ANY significant word matches
-                word_match = any(word in title_lower for word in search_words)
+                word_match = all(word in title_lower for word in search_words)
                 if not word_match:
                     logger.debug(f"  ⚠️ Filtriran (no words): '{r.get('title', '')}'")
                     continue
