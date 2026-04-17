@@ -732,14 +732,7 @@ def scrape_webshops(search_term: str, max_price: float | None = None) -> list[di
             return results
         logger.info("[WEBSHOP] Google CSE: 0 → fallback na WinWin")
 
-    # ── 2. WinWin (Magento, radi bez cloud-scraper)
-    results = scrape_winwin(search_term, max_price)
-    if results:
-        logger.info(f"[WEBSHOP] WinWin: {len(results)} rezultata")
-        return results
-    logger.info("[WEBSHOP] WinWin: 0 → fallback na Eponuda")
-
-    # ── 3. Eponuda cloudscraper (može biti blokiran sa cloud IP-ja)
+    # ── 2. Eponuda cloudscraper (može biti blokiran sa cloud IP-ja)
     results = scrape_eponuda(search_term, max_price)
     logger.info(f"[WEBSHOP] Eponuda: {len(results)} rezultata")
     return results
