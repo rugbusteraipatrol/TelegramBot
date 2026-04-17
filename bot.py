@@ -80,16 +80,12 @@ naziv proizvoda
 
 (ponovi za svaki rezultat, sortirano od najjeftinije)
 
-Na samom kraju, jedan jedini red:
-🔍 [Pretraži sve cijene](https://www.eponuda.com/search/?q=UPIT)
-(gdje UPIT zamijeniš sa stvarnim pojmom pretrage, enkodiran za URL)
-
 ZABRANE — nikad ne krši:
-- ZABRANJENO pisati direktne linkove na proizvode ili shopove
-- Naziv shopa piši KAO TEKST, ne kao link
+- ZABRANJENO pisati bilo kakve URL-ove, linkove ili href-ove
+- ZABRANJENO pisati naziv shopa kao link — ISKLJUČIVO kao obični tekst
 - ZABRANJENO izmišljati cijene — koristi SAMO stvarne rezultate iz web search-a
 - Ako nisi pronašao rezultate, napiši: Nisam pronašao rezultate u webshopovima.
-- Bez uvoda, objašnjenja ili dodatnog teksta — samo lista i link na kraju"""
+- Bez uvoda, objašnjenja ili dodatnog teksta — samo lista, ništa više"""
 
 
 # ─── Labele dugmadi
@@ -673,16 +669,10 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
                     gemini_prompt += f"\nMaksimalna cijena: {max_price}€"
                 gemini_reply = await ask_gemini_webshop(gemini_prompt)
 
-                # Dodaj disclaimer i ručne linkove za provjeru
-                q = search_term.replace(' ', '+')
-                disclaimer = (
-                    f"\n\n━━━━━━━━━━━━━━━━━━━━\n"
-                    f"⚠️ _AI prijedlozi — preporučujemo provjeru:_\n"
-                    f"[Eponuda](https://www.eponuda.com/uporedicene?ep={q}) • "
-                    f"[Gigatron](https://www.gigatron.rs/pretraga?q={q}) • "
-                    f"[KP](https://www.kupujemprodajem.com/pretraga?keywords={q})"
-                )
-                reply = gemini_reply + disclaimer
+                import urllib.parse
+                q_enc = urllib.parse.quote_plus(search_term)
+                cenoteka = f"\n\n🔍 [Pronađi i kupi na Cenoteka](https://www.cenoteka.rs/search?q={q_enc})"
+                reply = gemini_reply + cenoteka
             else:
                 reply = format_combined_results(webshop_results, kp_results, search_term)
 
