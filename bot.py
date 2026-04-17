@@ -407,6 +407,75 @@ def format_webshop_results(results: list[dict], search_term: str) -> str:
     return "\n".join(lines)
 
 
+async def _call_gemini_with_search(prompt: str) -> str:
+    """Gemini API poziv sa Google Search alatom — bez system prompta."""
+    if not GOOGLE_API_KEY:
+        return ""
+    try:
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "tools": [{"googleSearch": {}}],
+        }
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{GEMINI_API_URL}?key={GOOGLE_API_KEY}",
+                json=payload,
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        if "candidates" in data and data["candidates"]:
+            parts = data["candidates"][0].get("content", {}).get("parts", [])
+            return "\n".join(p.get("text", "") for p in parts if "text" in p)
+        return ""
+    except Exception as e:
+        logger.error(f"[GEMINI] _call_gemini_with_search greška: {e}")
+        return ""
+
+
+async def fetch_pa_via_gemini(search_term: str, max_price: float | None = None) -> list[dict]:
+    """
+    Koristi Gemini + Google Search da pronađe PA oglase.
+    Zamjena za scrape_polovniautomobili koji dobiva 403 sa cloud IP-a.
+    """
+    prompt = (
+        f"Pronađi 5 najnovijih oglasa za '{search_term}' na "
+        f"polovniautomobili.com. Vrati SAMO oglase koje si "
+        f"stvarno vidio u search rezultatima u formatu:\n"
+        f"naziv | cijena | URL\n\n"
+        f"Ako nisi pronašao oglas na polovniautomobili.com "
+        f"— ne izmišljaj, napiši NEMA."
+    )
+    if max_price:
+        prompt += f"\nMaksimalna cijena: {max_price:.0f}€"
+
+    raw = await _call_gemini_with_search(prompt)
+    logger.info(f"[PA-GEMINI] Raw odgovor za '{search_term}':\n{raw[:400]}")
+
+    results = []
+    for line in raw.strip().splitlines():
+        line = line.strip(" -•*")
+        if not line or "NEMA" in line.upper():
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 3:
+            continue
+        title, price_text, url = parts[0], parts[1], parts[2]
+        # Prihvati samo stvarne PA URL-ove
+        if "polovniautomobili.com" not in url:
+            logger.debug(f"[PA-GEMINI] Skip (nije PA URL): {url}")
+            continue
+        price = scraper._parse_price(price_text)
+        # Filtriraj po max_price ako je zadana
+        if max_price and price and price > max_price:
+            logger.debug(f"[PA-GEMINI] Skip (cijena {price} > {max_price}): {title}")
+            continue
+        results.append({"title": title, "price": price, "price_text": price_text, "url": url})
+
+    logger.info(f"[PA-GEMINI] {len(results)} oglasa za '{search_term}'")
+    return results
+
+
 async def ask_gemini_webshop(user_message: str, retry_count: int = 0, max_retries: int = 2) -> str:
     """Šalje upit Gemini-u za webshop cijene (Gigatron, Tehnomanija itd.) sa retry logikom."""
     if not GOOGLE_API_KEY:
@@ -814,9 +883,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await do_search(update, user.id, text, is_premium)
 
 
-# Pamti kada je zadnji put poslan dnevni ručni link za PA (po ad_id)
-_pa_reminder_last_sent: dict[int, datetime] = {}
-
 # ─── Background job — provjera oglasa
 
 async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
@@ -871,28 +937,11 @@ async def check_ads_job(context: ContextTypes.DEFAULT_TYPE):
                         logger.error(f"❌ Greška pri slanju notifikacije o isteku: {send_err}")
                     continue
 
-            results = scraper.scrape_site(ad["site"], ad["search_term"], ad["max_price"])
-
-            # PA: ako 0 rezultata (403/bot-detection), pošalji dnevni ručni link
-            if not results and ad["site"] == "polovniautomobili.com":
-                last_sent = _pa_reminder_last_sent.get(ad["id"])
-                now = datetime.now()
-                if last_sent is None or (now - last_sent).total_seconds() > 86400:
-                    q = ad["search_term"].replace(" ", "+")
-                    pa_url = (
-                        f"https://www.polovniautomobili.com/auto-oglasi/pretraga?q={q}"
-                    )
-                    try:
-                        await context.bot.send_message(
-                            chat_id=ad["user_id"],
-                            text=f"🔍 Pretraži ručno: [{ad['search_term']} na PA]({pa_url})",
-                            parse_mode="Markdown",
-                        )
-                        _pa_reminder_last_sent[ad["id"]] = now
-                        logger.info(f" 📨 PA ručni link poslan za '{ad['search_term']}'")
-                    except Exception as send_err:
-                        logger.error(f" ❌ Greška pri slanju PA linka: {send_err}")
-                continue  # nema rezultata — preskoči filtriranje i known_urls logiku
+            # PA: Gemini + Google Search umjesto scrapera (scraper dobiva 403 sa cloud IP-a)
+            if ad["site"] == "polovniautomobili.com":
+                results = await fetch_pa_via_gemini(ad["search_term"], ad["max_price"])
+            else:
+                results = scraper.scrape_site(ad["site"], ad["search_term"], ad["max_price"])
 
             # CLIENT-SIDE FILTERING: Filter by search term (website search is often unreliable)
             search_term_lower = ad["search_term"].lower()
