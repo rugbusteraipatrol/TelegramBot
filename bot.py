@@ -680,12 +680,9 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
                 await thinking.edit_text(f"🛒 Tražim *{search_term}* u supermarketima...")
                 gemini_prompt = (
                     f"Pronađi cijenu za '{search_term}' u srpskim "
-                    f"supermarketima: Maxi, Idea, Lidl, Univerexport, Aroma.\n\n"
-                    f"Pretraži: site:maxi.rs OR site:idea.rs OR site:lidl.rs "
-                    f"OR site:univerexport.rs OR site:aroma.rs\n\n"
-                    f"Vrati SAMO:\n"
-                    f"naziv proizvoda\n"
-                    f"💰 cijena — naziv_supermarketa\n\n"
+                    f"supermarketima Maxi Idea Lidl Univerexport Aroma. "
+                    f"Pretraži i vrati stvarne cijene koje si pronašao. "
+                    f"Format: naziv • cijena RSD • prodavnica "
                     f"Bez URL-ova na proizvode."
                 )
                 if max_price:
