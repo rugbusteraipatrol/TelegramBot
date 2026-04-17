@@ -60,6 +60,21 @@ AUTO_KEYWORDS = [
     "motocikl", "skuteri", "kombi", "kamion"
 ]
 
+# ─── Hrana/namirnice ključne riječi → supermarket Gemini prompt
+FOOD_KEYWORDS = [
+    "majoneza", "ketchup", "kecap", "šećer", "secer", "brašno", "brasno",
+    "ulje", "mleko", "mlijeko", "sir", "jogurt", "pavlaka", "kajmak",
+    "hleb", "hljeb", "tjestenina", "testenina", "pirinač", "pirince",
+    "riza", "pasulj", "grah", "supa", "čorba", "corba", "konzerva",
+    "sok", "pivo", "vino", "čaj", "caj", "kafa", "kafa",
+    "čips", "cips", "grickalice", "čokolada", "cokolada", "biskvit", "keks",
+    "namirnice", "hrana", "prehrambeni", "supermarket", "market",
+    "fairy", "ariel", "persil", "domestos", "plazma", "chipsy",
+    "maxi", "lidl", "idea", "univerexport", "aroma",
+    "deterdžent", "deterdзent", "sapun", "šampon", "sampon",
+    "pampers", "pelene", "toalet papir", "vlažne maramice", "maramice",
+]
+
 # ─── Nekretnine ključne riječi → Halooglasi
 REAL_ESTATE_KEYWORDS = [
     "stan", "stanovi", "kuća", "kuca", "garsonjera", "apartman", "lokal",
@@ -187,6 +202,15 @@ def is_auto_search(text: str) -> bool:
     text_lower = text.lower()
     # Use word boundaries for all keywords to avoid "Motorola" matching "motor"
     for kw in AUTO_KEYWORDS:
+        if re.search(rf'\b{re.escape(kw)}\b', text_lower):
+            return True
+    return False
+
+
+def is_food_search(text: str) -> bool:
+    """Detektuje da li korisnik traži hranu/namirnice/kućne potrepštine."""
+    text_lower = text.lower()
+    for kw in FOOD_KEYWORDS:
         if re.search(rf'\b{re.escape(kw)}\b', text_lower):
             return True
     return False
@@ -654,23 +678,37 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
                 # → Fallback na Gemini AI koji radi direktno kroz API bez web scrapinga
                 logger.info("[SEARCH] Webshop+KP = 0 → Gemini AI fallback")
                 await thinking.edit_text(f"🔍 Pretražujem AI za *{search_term}*...")
-                gemini_prompt = (
-                    f"Pronađi cijene za '{search_term}' u Srbiji.\n\n"
-                    f"VAŽNO: Koristi Google Search i navedi SAMO stvarne rezultate koje si našao.\n"
-                    f"NIKADA ne izmišljaj linkove — uključi SAMO URL koji si vidio u search rezultatima.\n\n"
-                    f"1. Webshop cijene — Gigatron, WinWin, Tehnomanija, Eponuda, Shoppster (novi)\n"
-                    f"2. Polovni oglasi — KupujemProdajem (rabljeni)\n\n"
-                    f"Format: naziv • cijena u RSD ili EUR • direktan link\n"
-                    f"Sortiraj od najjeftinije. Odgovori na srpskom."
-                )
+                import urllib.parse
+                q_enc = urllib.parse.quote_plus(search_term)
+
+                if is_food_search(search_term):
+                    gemini_prompt = (
+                        f"Pronađi cijenu za '{search_term}' u srpskim "
+                        f"supermarketima: Maxi, Idea, Lidl, Univerexport, Aroma.\n\n"
+                        f"Pretraži: site:maxi.rs OR site:idea.rs OR site:lidl.rs "
+                        f"OR site:univerexport.rs OR site:aroma.rs\n\n"
+                        f"Vrati SAMO:\n"
+                        f"naziv proizvoda\n"
+                        f"💰 cijena — naziv_supermarketa\n\n"
+                        f"Bez URL-ova na proizvode."
+                    )
+                    end_link = f"\n\n🛒 [Pretraži na Maxi](https://www.maxi.rs/search?text={q_enc})"
+                else:
+                    gemini_prompt = (
+                        f"Pronađi cijene za '{search_term}' u Srbiji.\n\n"
+                        f"VAŽNO: Koristi Google Search i navedi SAMO stvarne rezultate koje si našao.\n"
+                        f"NIKADA ne izmišljaj linkove — uključi SAMO URL koji si vidio u search rezultatima.\n\n"
+                        f"1. Webshop cijene — Gigatron, WinWin, Tehnomanija, Eponuda, Shoppster (novi)\n"
+                        f"2. Polovni oglasi — KupujemProdajem (rabljeni)\n\n"
+                        f"Format: naziv • cijena u RSD ili EUR • direktan link\n"
+                        f"Sortiraj od najjeftinije. Odgovori na srpskom."
+                    )
+                    end_link = f"\n\n🔍 [Pronađi i kupi na Cenoteka](https://www.cenoteka.rs/search?q={q_enc})"
+
                 if max_price:
                     gemini_prompt += f"\nMaksimalna cijena: {max_price}€"
                 gemini_reply = await ask_gemini_webshop(gemini_prompt)
-
-                import urllib.parse
-                q_enc = urllib.parse.quote_plus(search_term)
-                cenoteka = f"\n\n🔍 [Pronađi i kupi na Cenoteka](https://www.cenoteka.rs/search?q={q_enc})"
-                reply = gemini_reply + cenoteka
+                reply = gemini_reply + end_link
             else:
                 reply = format_combined_results(webshop_results, kp_results, search_term)
 
