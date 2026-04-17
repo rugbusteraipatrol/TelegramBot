@@ -62,17 +62,33 @@ AUTO_KEYWORDS = [
 
 # ─── Hrana/namirnice ključne riječi → supermarket Gemini prompt
 FOOD_KEYWORDS = [
+    # voće
+    "borovnice", "jabuke", "jabuka", "kruške", "kruška", "banana", "banane",
+    "jagode", "jagoda", "malina", "maline", "grožđe", "narandža", "limun",
+    "voće", "voce",
+    # meso i proteini
+    "meso", "piletina", "pileće", "pilece", "govedina", "goveđe", "govede",
+    "svinjetina", "svinjsko", "riba", "jaja", "jaje",
+    # mliječni
+    "mleko", "mlijeko", "jogurt", "sir", "pavlaka", "kajmak", "maslac",
+    # pekarski
+    "hljeb", "hleb", "kifla", "kifle", "pogača", "pogaca",
+    # povrće
+    "krompir", "paradajz", "luk", "šargarepa", "sargarepa", "paprika",
+    "kupus", "salata", "povrće", "povrce", "tikvica", "krastavac",
+    # ostale namirnice
     "majoneza", "ketchup", "kecap", "šećer", "secer", "brašno", "brasno",
-    "ulje", "mleko", "mlijeko", "sir", "jogurt", "pavlaka", "kajmak",
-    "hleb", "hljeb", "tjestenina", "testenina", "pirinač", "pirince",
+    "ulje", "tjestenina", "testenina", "pirinač", "pirince",
     "riza", "pasulj", "grah", "supa", "čorba", "corba", "konzerva",
-    "sok", "pivo", "vino", "čaj", "caj", "kafa", "kafa",
+    "sok", "čaj", "caj", "kafa",
     "čips", "cips", "grickalice", "čokolada", "cokolada", "biskvit", "keks",
-    "namirnice", "hrana", "prehrambeni", "supermarket", "market",
-    "fairy", "ariel", "persil", "domestos", "plazma", "chipsy",
-    "maxi", "lidl", "idea", "univerexport", "aroma",
-    "deterdžent", "deterdзent", "sapun", "šampon", "sampon",
-    "pampers", "pelene", "toalet papir", "vlažne maramice", "maramice",
+    "namirnice", "hrana", "supermarket",
+    # kućna hemija
+    "fairy", "ariel", "persil", "domestos",
+    "deterdžent", "sapun", "šampon", "sampon",
+    "pampers", "pelene", "vlažne maramice", "maramice",
+    # supermarketi
+    "maxi", "lidl", "univerexport", "aroma",
 ]
 
 # ─── Nekretnine ključne riječi → Halooglasi
@@ -646,54 +662,52 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
                 reply = format_halooglasi_results(results, search_term)
 
         else:
-            # ── Kombinirano: webshop cijene (WinWin) + polovni oglasi (KP)
-            # Vrijedi za: kp_mode, tech_mode i sve ostalo (bez auto/nekretnine)
+            # ── Kombinirano: webshop/KP — ili food supermarket Gemini
             product_name, max_price = parse_ad_query(text)
             search_term = extract_search_term(product_name or text)
+            food_mode = is_food_search(search_term)
             logger.info(
                 f"[SEARCH] KOMBINIRANO mod | term: '{search_term}' | max_price: {max_price} "
-                f"| kp={kp_mode} | tech={tech_mode}"
+                f"| kp={kp_mode} | tech={tech_mode} | food={food_mode}"
             )
 
-            await thinking.edit_text(f"🔍 Pretražujem webshopove i KP za *{search_term}*...")
+            import asyncio, urllib.parse
+            q_enc = urllib.parse.quote_plus(search_term)
 
-            import asyncio
-            # Pokretanje oba scrapers paralelno
-            webshop_task = asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: scraper.scrape_webshops(search_term, max_price)
-            )
-            kp_task = asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: scraper.scrape_kupujemprodajem(search_term, max_price)
-            )
-            webshop_results, kp_results = await asyncio.gather(webshop_task, kp_task)
+            if food_mode:
+                # ── Hrana: direktno na supermarket Gemini prompt, bez scrapers i KP
+                logger.info("[SEARCH] FOOD mod → supermarket Gemini prompt")
+                await thinking.edit_text(f"🛒 Tražim *{search_term}* u supermarketima...")
+                gemini_prompt = (
+                    f"Pronađi cijenu za '{search_term}' u srpskim "
+                    f"supermarketima: Maxi, Idea, Lidl, Univerexport, Aroma.\n\n"
+                    f"Pretraži: site:maxi.rs OR site:idea.rs OR site:lidl.rs "
+                    f"OR site:univerexport.rs OR site:aroma.rs\n\n"
+                    f"Vrati SAMO:\n"
+                    f"naziv proizvoda\n"
+                    f"💰 cijena — naziv_supermarketa\n\n"
+                    f"Bez URL-ova na proizvode."
+                )
+                if max_price:
+                    gemini_prompt += f"\nMaksimalna cijena: {max_price}€"
+                gemini_reply = await ask_gemini_webshop(gemini_prompt)
+                reply = gemini_reply + f"\n\n🛒 [Pretraži na Maxi](https://www.maxi.rs/search?text={q_enc})"
 
-            logger.info(
-                f"[SEARCH] Webshop: {len(webshop_results)} | KP: {len(kp_results)}"
-            )
+            else:
+                # ── Technika/ostalo: scrapers paralelno + Gemini fallback
+                await thinking.edit_text(f"🔍 Pretražujem webshopove i KP za *{search_term}*...")
+                webshop_task = asyncio.get_event_loop().run_in_executor(
+                    None, lambda: scraper.scrape_webshops(search_term, max_price)
+                )
+                kp_task = asyncio.get_event_loop().run_in_executor(
+                    None, lambda: scraper.scrape_kupujemprodajem(search_term, max_price)
+                )
+                webshop_results, kp_results = await asyncio.gather(webshop_task, kp_task)
+                logger.info(f"[SEARCH] Webshop: {len(webshop_results)} | KP: {len(kp_results)}")
 
-            if not webshop_results and not kp_results:
-                # Svi scrapers su zakazali (Railway IP blokiran ili CSE greška)
-                # → Fallback na Gemini AI koji radi direktno kroz API bez web scrapinga
-                logger.info("[SEARCH] Webshop+KP = 0 → Gemini AI fallback")
-                await thinking.edit_text(f"🔍 Pretražujem AI za *{search_term}*...")
-                import urllib.parse
-                q_enc = urllib.parse.quote_plus(search_term)
-
-                if is_food_search(search_term):
-                    gemini_prompt = (
-                        f"Pronađi cijenu za '{search_term}' u srpskim "
-                        f"supermarketima: Maxi, Idea, Lidl, Univerexport, Aroma.\n\n"
-                        f"Pretraži: site:maxi.rs OR site:idea.rs OR site:lidl.rs "
-                        f"OR site:univerexport.rs OR site:aroma.rs\n\n"
-                        f"Vrati SAMO:\n"
-                        f"naziv proizvoda\n"
-                        f"💰 cijena — naziv_supermarketa\n\n"
-                        f"Bez URL-ova na proizvode."
-                    )
-                    end_link = f"\n\n🛒 [Pretraži na Maxi](https://www.maxi.rs/search?text={q_enc})"
-                else:
+                if not webshop_results and not kp_results:
+                    logger.info("[SEARCH] Webshop+KP = 0 → Gemini AI fallback")
+                    await thinking.edit_text(f"🔍 Pretražujem AI za *{search_term}*...")
                     gemini_prompt = (
                         f"Pronađi cijene za '{search_term}' u Srbiji.\n\n"
                         f"VAŽNO: Koristi Google Search i navedi SAMO stvarne rezultate koje si našao.\n"
@@ -703,14 +717,12 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
                         f"Format: naziv • cijena u RSD ili EUR • direktan link\n"
                         f"Sortiraj od najjeftinije. Odgovori na srpskom."
                     )
-                    end_link = f"\n\n🔍 [Pronađi i kupi na Cenoteka](https://www.cenoteka.rs/search?q={q_enc})"
-
-                if max_price:
-                    gemini_prompt += f"\nMaksimalna cijena: {max_price}€"
-                gemini_reply = await ask_gemini_webshop(gemini_prompt)
-                reply = gemini_reply + end_link
-            else:
-                reply = format_combined_results(webshop_results, kp_results, search_term)
+                    if max_price:
+                        gemini_prompt += f"\nMaksimalna cijena: {max_price}€"
+                    gemini_reply = await ask_gemini_webshop(gemini_prompt)
+                    reply = gemini_reply + f"\n\n🔍 [Pronađi i kupi na Cenoteka](https://www.cenoteka.rs/search?q={q_enc})"
+                else:
+                    reply = format_combined_results(webshop_results, kp_results, search_term)
 
     except Exception as e:
         logger.error(f"[SEARCH] EXCEPTION: {type(e).__name__}: {e}", exc_info=True)
