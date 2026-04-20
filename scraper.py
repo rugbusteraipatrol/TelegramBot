@@ -154,15 +154,16 @@ def scrape_polovniautomobili(search_term: str, max_price: float | None = None) -
                 logger.debug(f"⚠️ PA: Cijena {price} iznad limita {max_price}, skipam")
                 continue
 
-            # SOFT FILTERING: Prefer results that contain search term, but don't exclude others
+            # HARD FILTERING: naslov mora sadržati SVE ključne riječi iz upita
+            # Ignorišemo cifre (već pokrivene sa price_to) i kratke riječi
+            keywords = [w.lower() for w in search_term.split()
+                        if len(w) > 2 and not w.isdigit()]
             title_lower = title.lower()
-            contains_term = search_term.lower() in title_lower
+            if not all(kw in title_lower for kw in keywords):
+                logger.debug(f"⚠️ PA: '{title[:45]}' ne sadrži sve ključne, skipam")
+                continue
 
-            if contains_term:
-                logger.debug(f"  ✓ PA (match): {title[:40]}... | {price_text}")
-            else:
-                logger.debug(f"  ~ PA (fallback): {title[:40]}... | {price_text}")
-
+            logger.debug(f"  ✓ PA: {title[:45]} | {price_text}")
             results.append({"title": title, "price": price, "price_text": price_text, "url": href})
 
         except Exception as e:
