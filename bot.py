@@ -632,12 +632,17 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
                 lambda: scraper.scrape_polovniautomobili(search_term)
             )
 
-            # Ako PolvniAutomobili ne vrati relevantne rezultate, fallback na Gemini
-            # (website search je često iritantan i vraća nasumične automobile)
             if not results:
-                logger.info("[SEARCH] PolvniAutomobili vratio 0 rezultata, fallback na Gemini")
-                await thinking.edit_text("🔍 Pretražujem dostupne oglase...")
-                reply = await ask_gemini_webshop(text)
+                logger.info("[SEARCH] PolvniAutomobili vratio 0 rezultata → direktan link")
+                import urllib.parse
+                q_enc = urllib.parse.quote_plus(search_term)
+                pa_url = f"https://www.polovniautomobili.com/auto-oglasi/pretraga?q={q_enc}"
+                if max_price:
+                    pa_url += f"&price_to={int(max_price)}"
+                reply = (
+                    f"🔍 Pretraži *{search_term}* na PolvniAutomobili:\n"
+                    f"{pa_url}"
+                )
             else:
                 reply = format_auto_results(results, search_term)
 
