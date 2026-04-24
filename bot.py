@@ -510,6 +510,11 @@ async def fetch_pa_via_gemini(search_term: str, max_price: float | None = None) 
         if max_price and price and price > max_price:
             logger.debug(f"[PA-GEMINI] Skip (cijena {price} > {max_price}): {title}")
             continue
+        # Keyword filter: naslov mora sadržati SVE ključne riječi iz upita
+        keywords = [w.lower() for w in search_term.split() if len(w) > 2 and not w.isdigit()]
+        if keywords and not all(kw in title.lower() for kw in keywords):
+            logger.debug(f"[PA-GEMINI] Skip (keyword filter): '{title[:45]}'")
+            continue
         results.append({"title": title, "price": price, "price_text": price_text, "url": url})
 
     logger.info(f"[PA-GEMINI] {len(results)} oglasa za '{search_term}'")
@@ -523,12 +528,14 @@ async def ask_gemini_webshop(user_message: str, retry_count: int = 0, max_retrie
         return "❌ Greška u konfiguraciji: GOOGLE_API_KEY nije pronađen.\n\nKontaktiraj admina."
 
     try:
+        # Napomena: gemini-2.5-flash ne podržava systemInstruction zajedno sa googleSearch
+        # alatom — daje 400 grešku. System prompt se ubacuje u user poruku.
+        combined_message = SYSTEM_PROMPT_WEBSHOP + "\n\n---\n\n" + user_message
         payload = {
             "contents": [{
                 "role": "user",
-                "parts": [{"text": user_message}]
+                "parts": [{"text": combined_message}]
             }],
-            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT_WEBSHOP}]},
             "tools": [{"googleSearch": {}}]
         }
 
@@ -537,7 +544,7 @@ async def ask_gemini_webshop(user_message: str, retry_count: int = 0, max_retrie
             response = await httpx_client.post(
                 f"{GEMINI_API_URL}?key={GOOGLE_API_KEY}",
                 json=payload,
-                timeout=30.0
+                timeout=60.0
             )
 
             # Detaljniji error logging
@@ -584,7 +591,7 @@ async def ask_gemini_webshop(user_message: str, retry_count: int = 0, max_retrie
         return "Nisam pronašao rezultate."
 
     except httpx.TimeoutException:
-        logger.error(f"❌ GEMINI Timeout (30s) - attempt {retry_count + 1}")
+        logger.error(f"❌ GEMINI Timeout (60s) - attempt {retry_count + 1}")
         if retry_count < max_retries:
             import asyncio
             await asyncio.sleep(2 ** retry_count)
@@ -621,16 +628,12 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
         real_estate_mode = is_real_estate_search(text)
 
         if auto_mode and not kp_mode:
-            # ── PolvniAutomobili scraping
+            # ── PolvniAutomobili via Gemini (scraper dobiva 403 sa cloud IP-a)
             product_name, max_price = parse_ad_query(text)
             search_term = extract_search_term(product_name or text)
             logger.info(f"[SEARCH] AUTO mod | term: '{search_term}' | max_price: {max_price}")
             await thinking.edit_text(f"🚗 Tražim *{search_term}* na PolvniAutomobili...")
-            import asyncio
-            results = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: scraper.scrape_polovniautomobili(search_term)
-            )
+            results = await fetch_pa_via_gemini(search_term, max_price)
 
             if not results:
                 logger.info("[SEARCH] PolvniAutomobili vratio 0 rezultata → direktan link")
@@ -707,8 +710,8 @@ async def do_search(update: Update, user_id: int, text: str, is_premium: bool):
                 webshop_results, kp_results = await asyncio.gather(webshop_task, kp_task)
                 logger.info(f"[SEARCH] Webshop: {len(webshop_results)} | KP: {len(kp_results)}")
 
-                if not webshop_results and not kp_results:
-                    logger.info("[SEARCH] Webshop+KP = 0 → Gemini AI fallback")
+                if not webshop_results:
+                    logger.info("[SEARCH] Webshop = 0 → Gemini AI fallback za webshopove")
                     await thinking.edit_text(f"🔍 Pretražujem AI za *{search_term}*...")
                     gemini_prompt = (
                         f"Pronađi cijene za '{search_term}' u Srbiji.\n\n"

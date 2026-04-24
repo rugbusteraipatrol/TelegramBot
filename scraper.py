@@ -13,6 +13,7 @@ Ako scraping prestane raditi, ažurirajte selektore u odgovarajućoj funkciji.
 import re
 import logging
 import requests
+import urllib.parse
 from bs4 import BeautifulSoup
 import time
 import random
@@ -102,18 +103,40 @@ def _matches_price(price: float | None, max_price: float | None) -> bool:
 
 # ─── Scrapers ─────────────────────────────────────────────────────────────────
 
+def _build_pa_url(search_term: str, max_price: float | None = None) -> str:
+    """Gradi PA search URL sa brand/model parametrima (PHP array format).
+
+    PA ne koristi ?q= parametar — koristi brand i model[0][model].
+    Python requests bi enkodovao zagrade u %5B%5D, pa gradimo URL ručno.
+
+    Primjeri:
+      'Opel Mokka'  → ?brand=opel&model[0][model]=mokka&sort=renewDate
+      'VW Golf 5'   → ?brand=vw&model[0][model]=golf+5&sort=renewDate
+      'BMW X5'      → ?brand=bmw&model[0][model]=x5&sort=renewDate
+      'Audi'        → ?brand=audi&sort=renewDate  (samo brand, bez modela)
+    """
+    words = search_term.strip().split()
+    brand = urllib.parse.quote_plus(words[0].lower()) if words else ""
+    model = urllib.parse.quote_plus(" ".join(words[1:]).lower()) if len(words) > 1 else ""
+
+    base = "https://www.polovniautomobili.com/auto-oglasi/pretraga"
+    if model:
+        params_str = f"brand={brand}&model[0][model]={model}&sort=renewDate"
+    else:
+        params_str = f"brand={brand}&sort=renewDate"
+
+    if max_price:
+        params_str += f"&price_to={int(max_price)}"
+
+    return f"{base}?{params_str}"
+
+
 def scrape_polovniautomobili(search_term: str, max_price: float | None = None) -> list[dict]:
     results = []
-    url = "https://www.polovniautomobili.com/auto-oglasi/pretraga"
+    url = _build_pa_url(search_term, max_price)
+    logger.info(f"🔗 PA Scraping: {url} | search='{search_term}' | max_price={max_price}")
 
-    params = {
-        "q": search_term,
-        "sort": "renewDate",
-        **({"price_to": int(max_price)} if max_price else {}),
-    }
-    logger.info(f"🔗 PA Scraping: {url} | q='{search_term}' | max_price={max_price}")
-
-    soup = _get(url, params=params)
+    soup = _get(url)
     if not soup:
         logger.error(f"❌ PA: Nisu mogli dobiti soup za '{search_term}'")
         return results
@@ -199,10 +222,12 @@ def scrape_kupujemprodajem(search_term: str, max_price: float | None = None) -> 
         logger.error(f"❌ KP: Nisu mogli dobiti soup za '{search_term}'")
         return results
 
-    # Prvo pokušaj sa article tagom (nova struktura KupujemProdajem)
+    # Pokušaj pronaći oglase — KP mijenja CSS klase sa svakim buildom,
+    # pa koristimo wildcard [class*=] matching koji ne ovisi o hash sufiksu
     items = soup.find_all("article")
     if not items:
-        # Fallback na stare selektore ako article ne radi
+        items = soup.select("[class*='AdItem'], [class*='adItem'], [class*='OglasItem']")
+    if not items:
         items = soup.select("div.offer-item, article.offer-item, div.kp-ad-list-item, li.offer-list-item")
 
     logger.info(f"📍 KP: Pronađenih {len(items)} itemova")
@@ -221,8 +246,13 @@ def scrape_kupujemprodajem(search_term: str, max_price: float | None = None) -> 
                     title_el = link
                     break
 
-            # Pronađi cijenu sa novim selectorom
-            price_el = item.select_one("div.AdItem_price__VZ_at, div.AdItem_priceHolder__yVMOe")
+            # Pronađi cijenu — wildcard matching jer KP hash sufiksi se mijenjaju
+            # Npr. AdItem_price__VZ_at, AdItem_price__XK92p, itd.
+            price_el = item.select_one(
+                "[class*='AdItem_price'], [class*='adItem_price'], "
+                "[class*='AdItem_Price'], [class*='price-box'], "
+                "span.price, .offer-price, .kp-ad-price"
+            )
 
             # Fallback na stare selektore ako novi ne rade
             if not title_el:
@@ -230,9 +260,7 @@ def scrape_kupujemprodajem(search_term: str, max_price: float | None = None) -> 
                     "h3 a, h2 a, .offer-title a, .kp-ad-name a"
                 )
             if not price_el:
-                price_el = item.select_one(
-                    "span.price, .price-box, .offer-price, .kp-ad-price"
-                )
+                price_el = item.select_one("[class*='price'], [class*='Price'], [class*='cena']")
 
             if not title_el or not price_el:
                 logger.debug("⚠️ KP: Title ili price element nije pronađen, skipam item")
