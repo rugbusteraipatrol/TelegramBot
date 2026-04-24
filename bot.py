@@ -447,6 +447,33 @@ def format_webshop_results(results: list[dict], search_term: str) -> str:
     return "\n".join(lines)
 
 
+async def _resolve_grounding_urls(text: str) -> str:
+    """
+    Zamijeni Gemini grounding redirect URL-ove sa direktnim linkovima.
+
+    Gemini googleSearch tool vraća URL-ove oblika:
+      https://vertexaisearch.cloud.google.com/grounding-api-redirect/XXXXXXX
+    koji redirectuju na stvarnu stranicu. Pratimo redirect da dobijemo direktan URL.
+    """
+    pattern = r'https://vertexaisearch\.cloud\.google\.com/grounding-api-redirect/[A-Za-z0-9_\-=]+'
+    redirect_urls = list(dict.fromkeys(re.findall(pattern, text)))  # unique, order preserved
+    if not redirect_urls:
+        return text
+
+    async with httpx.AsyncClient(follow_redirects=True, timeout=8.0) as client:
+        for redir_url in redirect_urls:
+            try:
+                resp = await client.head(redir_url)
+                final_url = str(resp.url)
+                if final_url != redir_url:
+                    text = text.replace(redir_url, final_url)
+                    logger.debug(f"[GROUNDING] {redir_url[:50]}... → {final_url}")
+            except Exception as e:
+                logger.debug(f"[GROUNDING] Nije moglo razriješiti {redir_url[:50]}: {e}")
+
+    return text
+
+
 async def _call_gemini_with_search(prompt: str) -> str:
     """Gemini API poziv sa Google Search alatom — bez system prompta."""
     if not GOOGLE_API_KEY:
@@ -585,6 +612,8 @@ async def ask_gemini_webshop(user_message: str, retry_count: int = 0, max_retrie
             texts = [p.get("text", "") for p in parts if "text" in p]
             result = "\n".join(texts) or "Nisam pronašao rezultate."
             logger.info(f"[GEMINI] ✅ Pronađeni rezultati ({len(texts)} dijelova)")
+            # Razriješi Gemini grounding redirect URL-ove → direktni shop linkovi
+            result = await _resolve_grounding_urls(result)
             return result
 
         logger.warning(f"[GEMINI] Nema candidates u odgovoru: {data}")
